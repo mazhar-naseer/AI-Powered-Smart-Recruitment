@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = 20
     database_pool_timeout: int = 30
     resume_storage_path: Path = Path("../storage/resumes")
+    avatar_storage_path: Path = Path("../storage/avatars")
     max_resume_size_mb: int = 5
     frontend_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",

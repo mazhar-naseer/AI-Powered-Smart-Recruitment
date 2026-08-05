@@ -30,11 +30,13 @@ from app.models import (
     RefreshSession,
     Resume,
     Role,
+    ScoreOverride,
     User,
     UserStatus,
 )
 from app.resume_processing import process_application
 from app.schemas import (
+    AdminCreate,
     AuthOut,
     JobCreate,
     JobOut,
@@ -43,6 +45,7 @@ from app.schemas import (
     ProfileUpdate,
     RegisterRequest,
     ResendVerificationRequest,
+    ScoreOverrideRequest,
     UserOut,
     UserStatusUpdate,
     VerifyEmailRequest,
@@ -77,6 +80,12 @@ def insight_dict(application: Application) -> dict:
         "ai_score": application.ai_score,
         "ai_status": application.ai_status,
         "ai_error": application.ai_error,
+        "structured_profile": application.structured_profile or {},
+        "evidence_matrix": application.evidence_matrix or [],
+        "analysis_version": application.analysis_version,
+        "parser_version": application.parser_version,
+        "override_score": application.override_score,
+        "override_reason": application.override_reason,
         "component_scores": application.component_scores or {},
         "ai_summary": application.ai_summary,
         "ai_strengths": application.ai_strengths or [],
@@ -221,6 +230,50 @@ def update_profile(
     db.commit()
     db.refresh(user)
     return envelope(UserOut.model_validate(user).model_dump(mode="json"), "Profile updated")
+
+
+@router.post("/profiles/me/avatar")
+async def upload_profile_avatar(
+    avatar: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    content = await avatar.read()
+    if not content or len(content) > 3 * 1024 * 1024:
+        raise HTTPException(413, "Profile photo must be smaller than 3 MB")
+    signatures = {
+        b"\xff\xd8\xff": (".jpg", "image/jpeg"),
+        b"\x89PNG\r\n\x1a\n": (".png", "image/png"),
+        b"RIFF": (".webp", "image/webp"),
+    }
+    detected = next((value for signature, value in signatures.items() if content.startswith(signature)), None)
+    if detected and detected[0] == ".webp" and content[8:12] != b"WEBP":
+        detected = None
+    if not detected:
+        raise HTTPException(415, "Only JPG, PNG, or WEBP profile photos are accepted")
+    suffix, _mime = detected
+    storage = settings.avatar_storage_path.resolve()
+    storage.mkdir(parents=True, exist_ok=True)
+    destination = storage / f"{user.id}-{uuid.uuid4().hex}{suffix}"
+    destination.write_bytes(content)
+    previous = Path(user.avatar_path).resolve() if user.avatar_path else None
+    user.avatar_path = str(destination)
+    audit(db, user.id, "profile.avatar_updated", "user", user.id)
+    db.commit()
+    if previous and previous.parent == storage and previous.is_file():
+        previous.unlink()
+    return envelope({"avatar_url": "/api/v1/profiles/me/avatar"}, "Profile photo updated")
+
+
+@router.get("/profiles/me/avatar")
+def profile_avatar(user: User = Depends(current_user)):
+    if not user.avatar_path:
+        raise HTTPException(404, "Profile photo not found")
+    path = Path(user.avatar_path)
+    if not path.is_file() or path.resolve().parent != settings.avatar_storage_path.resolve():
+        raise HTTPException(404, "Profile photo not found")
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
+    return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
 
 
 @router.get("/jobs")
@@ -378,21 +431,22 @@ async def apply(
     content = await resume.read(settings.max_resume_size_mb * 1024 * 1024 + 1)
     if len(content) > settings.max_resume_size_mb * 1024 * 1024:
         raise HTTPException(413, "Resume exceeds size limit")
-    if (
-        not resume.filename
-        or not resume.filename.lower().endswith(".pdf")
-        or not content.startswith(b"%PDF-")
-    ):
-        raise HTTPException(422, "A valid PDF resume is required")
+    filename = Path(resume.filename or "").name
+    suffix = Path(filename).suffix.lower()
+    valid_pdf = suffix == ".pdf" and content.startswith(b"%PDF-")
+    valid_docx = suffix == ".docx" and content.startswith(b"PK")
+    if not (valid_pdf or valid_docx):
+        raise HTTPException(422, "A valid PDF or DOCX resume is required")
+    mime_type = "application/pdf" if valid_pdf else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     storage = settings.resume_storage_path.resolve()
     storage.mkdir(parents=True, exist_ok=True)
-    key = storage / f"{uuid.uuid4()}.pdf"
+    key = storage / f"{uuid.uuid4()}{suffix}"
     key.write_bytes(content)
     record = Resume(
         applicant_id=user.id,
         storage_key=str(key),
-        original_filename=Path(resume.filename).name,
-        mime_type="application/pdf",
+        original_filename=filename,
+        mime_type=mime_type,
         size_bytes=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
     )
@@ -546,8 +600,64 @@ def download_resume(
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
     return FileResponse(
-        app.resume.storage_key, media_type="application/pdf", filename=app.resume.original_filename
+        app.resume.storage_key, media_type=app.resume.mime_type, filename=app.resume.original_filename
     )
+
+
+@router.post("/employer/applications/{application_id}/reanalyze", status_code=202)
+def employer_reanalyze_application(
+    application_id: str,
+    background: BackgroundTasks,
+    user: User = Depends(require_roles(Role.EMPLOYER)),
+    db: Session = Depends(get_db),
+):
+    application = db.scalar(
+        select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
+    )
+    if not application or application.job.employer_id != user.id:
+        raise HTTPException(404, "Application not found")
+    application.status = ApplicationStatus.PROCESSING
+    application.processing_error = None
+    audit(db, user.id, "application.reanalysis_requested", "application", application.id)
+    db.commit()
+    background.add_task(process_application, application.id, True)
+    return envelope({"id": application.id, "status": "processing"}, "Advanced analysis restarted")
+
+
+@router.post("/applications/{application_id}/override")
+def override_application_score(
+    application_id: str,
+    payload: ScoreOverrideRequest,
+    user: User = Depends(require_roles(Role.EMPLOYER, Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    application = db.scalar(
+        select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
+    )
+    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+        raise HTTPException(404, "Application not found")
+    previous = application.override_score if application.override_score is not None else application.final_score
+    application.override_score = payload.score
+    application.override_reason = payload.reason.strip()
+    application.overridden_by_id = user.id
+    application.overridden_at = datetime.now(UTC)
+    db.add(ScoreOverride(application_id=application.id, actor_id=user.id, previous_score=previous, override_score=payload.score, reason=payload.reason.strip()))
+    audit(db, user.id, "application.score_overridden", "application", application.id)
+    db.commit()
+    return envelope({"override_score": application.override_score, "override_reason": application.override_reason}, "Human review score saved")
+
+
+@router.get("/applications/{application_id}/overrides")
+def application_override_history(
+    application_id: str,
+    user: User = Depends(require_roles(Role.EMPLOYER, Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    application = db.scalar(select(Application).options(joinedload(Application.job)).where(Application.id == application_id))
+    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+        raise HTTPException(404, "Application not found")
+    history = db.scalars(select(ScoreOverride).where(ScoreOverride.application_id == application_id).order_by(ScoreOverride.created_at.desc())).all()
+    return envelope([{"id": item.id, "previous_score": item.previous_score, "override_score": item.override_score, "reason": item.reason, "actor_id": item.actor_id, "created_at": item.created_at.isoformat()} for item in history])
 
 
 @router.get("/employer/dashboard")
@@ -624,11 +734,39 @@ def admin_dashboard(user: User = Depends(require_roles(Role.ADMIN)), db: Session
 def admin_users(
     q: str = "", user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)
 ):
-    stmt = select(User).where(User.role != Role.ADMIN, User.status != UserStatus.DELETED)
+    stmt = select(User).where(User.status != UserStatus.DELETED)
     if q:
         stmt = stmt.where(or_(User.full_name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
     users = db.scalars(stmt.order_by(User.created_at.desc())).all()
     return envelope([UserOut.model_validate(item).model_dump(mode="json") for item in users])
+
+
+@router.post("/admin/users/admin", status_code=status.HTTP_201_CREATED)
+def create_administrator(
+    payload: AdminCreate,
+    admin: User = Depends(require_roles(Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    email = str(payload.email).lower().strip()
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(409, "An account with this email already exists")
+    created = User(
+        email=email,
+        full_name=payload.full_name.strip(),
+        password_hash=hash_password(payload.password),
+        role=Role.ADMIN,
+        status=UserStatus.ACTIVE,
+        email_verified=True,
+    )
+    db.add(created)
+    db.flush()
+    audit(db, admin.id, "admin.user_created", "user", created.id)
+    db.commit()
+    db.refresh(created)
+    return envelope(
+        UserOut.model_validate(created).model_dump(mode="json"),
+        "Administrator created successfully",
+    )
 
 
 @router.patch("/admin/users/{user_id}/status")
@@ -670,6 +808,130 @@ def admin_jobs(admin: User = Depends(require_roles(Role.ADMIN)), db: Session = D
         .all()
     )
     return envelope([job_dict(job) for job in jobs])
+
+
+@router.get("/admin/intelligence/monitoring")
+def intelligence_monitoring(
+    admin: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)
+):
+    applications = db.scalars(select(Application)).all()
+    scored = [item for item in applications if item.final_score is not None]
+    ai_completed = [item for item in scored if item.ai_score is not None]
+    disagreements = [
+        item for item in ai_completed
+        if abs(float(item.deterministic_score or 0) - float(item.ai_score or 0)) >= settings.hybrid_disagreement_threshold
+    ]
+    buckets = [
+        {"label": "0–39", "count": sum(float(item.final_score) < 40 for item in scored)},
+        {"label": "40–59", "count": sum(40 <= float(item.final_score) < 60 for item in scored)},
+        {"label": "60–79", "count": sum(60 <= float(item.final_score) < 80 for item in scored)},
+        {"label": "80–100", "count": sum(float(item.final_score) >= 80 for item in scored)},
+    ]
+    overridden = [item for item in scored if item.override_score is not None]
+    return envelope({
+        "total_applications": len(applications),
+        "scored_applications": len(scored),
+        "average_final_score": round(sum(float(item.final_score) for item in scored) / len(scored), 2) if scored else 0,
+        "gemini_completion_rate": round(len(ai_completed) / len(scored) * 100, 2) if scored else 0,
+        "disagreement_rate": round(len(disagreements) / len(ai_completed) * 100, 2) if ai_completed else 0,
+        "manual_review_count": len(disagreements),
+        "override_rate": round(len(overridden) / len(scored) * 100, 2) if scored else 0,
+        "score_distribution": buckets,
+        "guardrails": {
+            "maximum_gemini_weight_percent": round(settings.gemini_weight * 100, 2),
+            "disagreement_threshold_points": settings.hybrid_disagreement_threshold,
+            "protected_attributes_used": False,
+        },
+    })
+
+
+@router.get("/admin/jobs/{job_id}/applications")
+def admin_job_applications(
+    job_id: str,
+    admin: User = Depends(require_roles(Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    job = db.scalar(select(Job).where(Job.id == job_id, Job.status != JobStatus.DELETED))
+    if not job:
+        raise HTTPException(404, "Job not found")
+    applications = (
+        db.scalars(
+            select(Application)
+            .options(joinedload(Application.applicant))
+            .where(Application.job_id == job_id)
+            .order_by(Application.final_score.desc().nullslast(), Application.created_at)
+        )
+        .unique()
+        .all()
+    )
+    audit(db, admin.id, "admin.applications_viewed", "job", job.id)
+    db.commit()
+    return envelope(
+        [
+            {
+                "id": application.id,
+                "job_id": application.job_id,
+                "status": application.status.value,
+                "final_score": application.final_score,
+                "matched_skills": application.matched_skills or [],
+                **insight_dict(application),
+                "processing_error": public_processing_error(application),
+                "created_at": application.created_at.isoformat(),
+                "applicant": UserOut.model_validate(application.applicant).model_dump(mode="json"),
+            }
+            for application in applications
+        ]
+    )
+
+
+@router.get("/admin/applications/{application_id}/resume")
+def admin_download_resume(
+    application_id: str,
+    admin: User = Depends(require_roles(Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    application = db.scalar(
+        select(Application)
+        .options(joinedload(Application.resume))
+        .where(Application.id == application_id)
+    )
+    if not application:
+        raise HTTPException(404, "Application not found")
+    resume_path = Path(application.resume.storage_key)
+    if not resume_path.is_file():
+        raise HTTPException(404, "Resume file not found")
+    audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
+    db.commit()
+    return FileResponse(
+        resume_path,
+        media_type=application.resume.mime_type,
+        filename=application.resume.original_filename,
+    )
+
+
+@router.post("/admin/applications/{application_id}/retry-ai", status_code=202)
+def admin_retry_application_ai(
+    application_id: str,
+    background: BackgroundTasks,
+    admin: User = Depends(require_roles(Role.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    application = db.get(Application, application_id)
+    if not application:
+        raise HTTPException(404, "Application not found")
+    if application.status != ApplicationStatus.COMPLETED:
+        raise HTTPException(409, "Resume processing must complete before AI can be retried")
+    if not settings.gemini_enabled or not settings.gemini_api_key:
+        raise HTTPException(503, "Gemini analysis is not configured")
+    application.ai_status = "processing"
+    application.ai_error = None
+    audit(db, admin.id, "admin.ai_analysis_restarted", "application", application.id)
+    db.commit()
+    background.add_task(process_application, application.id, True)
+    return envelope(
+        {"id": application.id, "ai_status": "processing"},
+        "Gemini analysis restarted",
+    )
 
 
 @router.delete("/admin/jobs/{job_id}")

@@ -1,13 +1,12 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pypdf import PdfReader
-
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Application, ApplicationStatus
 from app.ai_provider import analyze_with_gemini
-from app.scoring import detailed_score, hybrid_score
+from app.resume_parser import PARSER_VERSION, parse_resume, structured_profile
+from app.scoring import ANALYSIS_VERSION, advanced_score, hybrid_score
 
 
 def sanitize_extracted_text(text: str) -> str:
@@ -22,19 +21,39 @@ def process_application(application_id: str, force: bool = False) -> None:
         if not application or (application.status == ApplicationStatus.COMPLETED and not force):
             return
         text = (application.resume.extracted_text or "").strip()
-        if not text:
-            path = Path(application.resume.storage_key)
-            raw_text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-            text = sanitize_extracted_text(raw_text).strip()
+        if text:
+            profile = structured_profile(text, application.job.required_skills, application.job.domain_keywords or [])
+            parser_version = application.parser_version or PARSER_VERSION
+        else:
+            text, profile, parser_version = parse_resume(
+                Path(application.resume.storage_key),
+                application.resume.mime_type,
+                application.job.required_skills,
+                application.job.domain_keywords or [],
+            )
         if len(text) < 30:
             raise ValueError("The PDF contains insufficient extractable text")
-        score, matched, components = detailed_score(
+        score, matched, components, evidence = advanced_score(
             text,
             application.job.title,
             application.job.description,
             application.job.required_skills,
             application.job.experience_level,
+            profile,
+            application.job.scorecard,
+            application.job.skill_priorities,
+            application.job.domain_keywords,
+            application.job.education_requirements,
+            application.job.certification_requirements,
         )
+        components["scorecard_snapshot"] = {
+            "weights": application.job.scorecard,
+            "skill_priorities": application.job.skill_priorities,
+            "domain_keywords": application.job.domain_keywords,
+            "education_requirements": application.job.education_requirements,
+            "certification_requirements": application.job.certification_requirements,
+        }
+        components["prompt_version"] = "gemini-evidence-v1"
         settings = get_settings()
         ai_error = None
         try:
@@ -42,12 +61,21 @@ def process_application(application_id: str, force: bool = False) -> None:
                 text,
                 f"{application.job.title}\n{application.job.description}",
                 application.job.required_skills,
+                profile,
             )
         except Exception as exc:
             # AI enrichment must never invalidate deterministic resume processing.
             ai = None
             ai_error = f"{type(exc).__name__}: {exc}"[:500]
         application.resume.extracted_text = text
+        application.structured_profile = {
+            **profile,
+            "ai_evidence_findings": ai.evidence_findings if ai else [],
+            "ai_risk_flags": ai.risk_flags if ai else [],
+        }
+        application.evidence_matrix = evidence
+        application.analysis_version = ANALYSIS_VERSION
+        application.parser_version = parser_version
         application.deterministic_score = score
         application.ai_score = round(ai.semantic_score, 2) if ai else None
         application.ai_status = "completed" if ai else "failed" if ai_error else "not_configured"

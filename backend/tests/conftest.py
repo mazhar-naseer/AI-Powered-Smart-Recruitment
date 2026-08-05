@@ -3,6 +3,7 @@ from pathlib import Path
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_smarthire.db"
 os.environ["RESUME_STORAGE_PATH"] = "./test_storage"
+os.environ["AVATAR_STORAGE_PATH"] = "./test_avatars"
 os.environ["SECRET_KEY"] = "test-secret-key-long-enough-for-tests"
 os.environ["ENVIRONMENT"] = "development"
 os.environ["SMTP_HOST"] = ""
@@ -28,6 +29,11 @@ def clean_database():
         for item in storage.iterdir():
             item.unlink()
         storage.rmdir()
+    avatars = Path("test_avatars")
+    if avatars.exists():
+        for item in avatars.iterdir():
+            item.unlink()
+        avatars.rmdir()
 
 
 @pytest.fixture

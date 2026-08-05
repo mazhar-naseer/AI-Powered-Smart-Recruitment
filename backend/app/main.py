@@ -22,6 +22,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings.resume_storage_path.mkdir(parents=True, exist_ok=True)
+    settings.avatar_storage_path.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
     yield
 

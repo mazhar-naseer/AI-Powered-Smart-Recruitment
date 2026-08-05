@@ -68,12 +68,37 @@ class User(TimestampMixin, Base):
     company_name: Mapped[str | None] = mapped_column(String(160))
     location: Mapped[str | None] = mapped_column(String(160))
     headline: Mapped[str | None] = mapped_column(String(180))
+    avatar_path: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    bio: Mapped[str | None] = mapped_column(Text)
+    website: Mapped[str | None] = mapped_column(String(500))
+    linkedin_url: Mapped[str | None] = mapped_column(String(500))
+    github_url: Mapped[str | None] = mapped_column(String(500))
+    skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+    languages: Mapped[list[str]] = mapped_column(JSON, default=list)
+    education: Mapped[list[str]] = mapped_column(JSON, default=list)
+    years_experience: Mapped[int | None] = mapped_column(Integer)
+    availability: Mapped[str | None] = mapped_column(String(80))
+    preferred_work_mode: Mapped[str | None] = mapped_column(String(40))
+    portfolio_url: Mapped[str | None] = mapped_column(String(500))
+    notice_period: Mapped[str | None] = mapped_column(String(80))
+    industry: Mapped[str | None] = mapped_column(String(120))
+    company_website: Mapped[str | None] = mapped_column(String(500))
+    company_size: Mapped[str | None] = mapped_column(String(40))
+    company_description: Mapped[str | None] = mapped_column(Text)
+    founded_year: Mapped[int | None] = mapped_column(Integer)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="employer", cascade="all, delete-orphan"
     )
-    applications: Mapped[list["Application"]] = relationship(back_populates="applicant")
+    applications: Mapped[list["Application"]] = relationship(
+        back_populates="applicant", foreign_keys="Application.applicant_id"
+    )
+
+    @property
+    def avatar_url(self) -> str | None:
+        return "/api/v1/profiles/me/avatar" if self.avatar_path else None
 
 
 class Job(TimestampMixin, Base):
@@ -83,6 +108,11 @@ class Job(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(180), index=True)
     description: Mapped[str] = mapped_column(Text)
     required_skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+    scorecard: Mapped[dict] = mapped_column(JSON, default=dict)
+    skill_priorities: Mapped[dict] = mapped_column(JSON, default=dict)
+    domain_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    education_requirements: Mapped[list[str]] = mapped_column(JSON, default=list)
+    certification_requirements: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.OPEN, index=True)
     location: Mapped[str | None] = mapped_column(String(160))
     employment_type: Mapped[str | None] = mapped_column(String(80))
@@ -124,6 +154,14 @@ class Application(TimestampMixin, Base):
     final_score: Mapped[float | None] = mapped_column(Float, index=True)
     matched_skills: Mapped[list[str]] = mapped_column(JSON, default=list)
     component_scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    structured_profile: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_matrix: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    analysis_version: Mapped[str] = mapped_column(String(40), default="advanced-v1")
+    parser_version: Mapped[str | None] = mapped_column(String(40))
+    override_score: Mapped[float | None] = mapped_column(Float)
+    override_reason: Mapped[str | None] = mapped_column(Text)
+    overridden_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    overridden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_summary: Mapped[str | None] = mapped_column(Text)
     ai_strengths: Mapped[list[str]] = mapped_column(JSON, default=list)
     ai_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -132,12 +170,25 @@ class Application(TimestampMixin, Base):
     processing_error: Mapped[str | None] = mapped_column(String(500))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     job: Mapped[Job] = relationship(back_populates="applications")
-    applicant: Mapped[User] = relationship(back_populates="applications")
+    applicant: Mapped[User] = relationship(
+        back_populates="applications", foreign_keys=[applicant_id]
+    )
     resume: Mapped[Resume] = relationship()
     __table_args__ = (
         UniqueConstraint("job_id", "applicant_id", name="uq_application_job_applicant"),
         Index("ix_applications_job_score", "job_id", "final_score"),
     )
+
+
+class ScoreOverride(Base):
+    __tablename__ = "score_overrides"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    previous_score: Mapped[float | None] = mapped_column(Float)
+    override_score: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class RefreshSession(Base):
