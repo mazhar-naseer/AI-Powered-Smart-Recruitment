@@ -1,0 +1,2 @@
+# SmartHire backend production dependencies
+-r backend/requirements.txt

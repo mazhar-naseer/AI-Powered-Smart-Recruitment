@@ -1,0 +1,14 @@
+Subject: Verify your SmartHire account
+From: tayyabbasra434@gmail.com
+To: candidate@example.com
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hello Candidate,
+
+Your verification code is 118899.
+Or verify here: http://localhost:5173/verify-email?token=3DxOfKsOIWKSiskfrR13=
+vR3TMmDGtJG2tiD-3hfY52X1c
+
+This expires in 30 minutes.

@@ -1,0 +1,14 @@
+Subject: Verify your SmartHire account
+From: no-reply@smarthire.local
+To: applicant@example.com
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hello Applicant,
+
+Your verification code is 397793.
+Or verify here: http://localhost:5173/verify-email?token=3DYcnGRx64j1hpR67Q3v=
+KdsNH-nlI7A9jPg5mfHqzb65A
+
+This expires in 30 minutes.
