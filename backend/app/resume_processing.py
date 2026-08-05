@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from pathlib import Path
 
 from app.config import get_settings
 from app.database import SessionLocal
@@ -7,6 +6,7 @@ from app.models import Application, ApplicationStatus
 from app.ai_provider import analyze_with_gemini
 from app.resume_parser import PARSER_VERSION, parse_resume, structured_profile
 from app.scoring import ANALYSIS_VERSION, advanced_score, hybrid_score
+from app.storage import resume_on_disk
 
 
 def sanitize_extracted_text(text: str) -> str:
@@ -25,12 +25,13 @@ def process_application(application_id: str, force: bool = False) -> None:
             profile = structured_profile(text, application.job.required_skills, application.job.domain_keywords or [])
             parser_version = application.parser_version or PARSER_VERSION
         else:
-            text, profile, parser_version = parse_resume(
-                Path(application.resume.storage_key),
-                application.resume.mime_type,
-                application.job.required_skills,
-                application.job.domain_keywords or [],
-            )
+            with resume_on_disk(application.resume.storage_key) as resume_path:
+                text, profile, parser_version = parse_resume(
+                    resume_path,
+                    application.resume.mime_type,
+                    application.job.required_skills,
+                    application.job.domain_keywords or [],
+                )
         if len(text) < 30:
             raise ValueError("The PDF contains insufficient extractable text")
         score, matched, components, evidence = advanced_score(

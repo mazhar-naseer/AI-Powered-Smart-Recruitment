@@ -41,12 +41,33 @@ class Settings(BaseSettings):
     gemini_weight: float = 0.35
     hybrid_disagreement_threshold: float = 25.0
     gemini_timeout_seconds: int = 30
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: str | None = None
+    use_cloudinary: bool = False
 
     @field_validator("gemini_weight")
     @classmethod
     def valid_gemini_weight(cls, value: float) -> float:
         if not 0 <= value <= 0.5:
             raise ValueError("GEMINI_WEIGHT must be between 0 and 0.5")
+        return value
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> object:
+        """Force the psycopg driver onto bare PostgreSQL URLs.
+
+        Managed hosts (Render, Heroku, Railway) expose ``postgresql://`` or the
+        legacy ``postgres://`` scheme. SQLAlchemy would resolve those to psycopg2,
+        which is not installed, so the driver is pinned explicitly.
+        """
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value[len("postgresql://") :]
         return value
 
     @field_validator("frontend_origins", mode="before")

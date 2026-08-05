@@ -368,6 +368,12 @@ Open:
 
 The backend waits for PostgreSQL, applies Alembic migrations, and starts Uvicorn workers. PostgreSQL data and uploaded resumes are stored in named Docker volumes.
 
+## Cloud deployment
+
+For a hosted deployment, see [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) — backend and PostgreSQL on Railway, frontend on Vercel, uploaded files on Cloudinary. [docs/GITHUB_ACTIONS_DEPLOYMENT.md](docs/GITHUB_ACTIONS_DEPLOYMENT.md) covers automating it.
+
+Set `USE_CLOUDINARY=true` on any host with an ephemeral filesystem. Uploads written to local disk there are lost on every redeploy and restart.
+
 ## Production recommendations
 
 - Deploy the application, admin portal, and API behind HTTPS
@@ -388,6 +394,8 @@ The backend waits for PostgreSQL, applies Alembic migrations, and starts Uvicorn
 - [Execution plan](docs/EXECUTION_PLAN.md)
 - [Testing guide](docs/TESTING.md)
 - [Decisions and open questions](docs/DECISIONS_AND_QUESTIONS.md)
+- [Railway deployment guide](docs/RAILWAY_DEPLOYMENT.md)
+- [GitHub Actions deployment](docs/GITHUB_ACTIONS_DEPLOYMENT.md)
 
 ## License
 

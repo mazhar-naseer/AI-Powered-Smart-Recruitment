@@ -14,7 +14,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -58,6 +58,16 @@ from app.security import (
     hash_password,
     require_roles,
     verify_password,
+)
+from app.storage import (
+    StorageError,
+    avatar_media_type,
+    delete_avatar,
+    delete_resume,
+    read_avatar,
+    read_resume,
+    save_avatar,
+    save_resume,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -252,16 +262,16 @@ async def upload_profile_avatar(
     if not detected:
         raise HTTPException(415, "Only JPG, PNG, or WEBP profile photos are accepted")
     suffix, _mime = detected
-    storage = settings.avatar_storage_path.resolve()
-    storage.mkdir(parents=True, exist_ok=True)
-    destination = storage / f"{user.id}-{uuid.uuid4().hex}{suffix}"
-    destination.write_bytes(content)
-    previous = Path(user.avatar_path).resolve() if user.avatar_path else None
-    user.avatar_path = str(destination)
+    try:
+        storage_key = save_avatar(content, user.id, suffix, settings)
+    except StorageError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    previous = user.avatar_path
+    user.avatar_path = storage_key
     audit(db, user.id, "profile.avatar_updated", "user", user.id)
     db.commit()
-    if previous and previous.parent == storage and previous.is_file():
-        previous.unlink()
+    if previous:
+        delete_avatar(previous, settings)
     return envelope({"avatar_url": "/api/v1/profiles/me/avatar"}, "Profile photo updated")
 
 
@@ -269,11 +279,17 @@ async def upload_profile_avatar(
 def profile_avatar(user: User = Depends(current_user)):
     if not user.avatar_path:
         raise HTTPException(404, "Profile photo not found")
-    path = Path(user.avatar_path)
-    if not path.is_file() or path.resolve().parent != settings.avatar_storage_path.resolve():
-        raise HTTPException(404, "Profile photo not found")
-    mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
-    return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
+    try:
+        content = read_avatar(user.avatar_path, settings)
+    except StorageError as exc:
+        raise HTTPException(404, "Profile photo not found") from exc
+    media_type = avatar_media_type(user.avatar_path)
+    suffix = Path(user.avatar_path).suffix.lower() or ".jpg"
+    return Response(
+        content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="profile{suffix}"'},
+    )
 
 
 @router.get("/jobs")
@@ -438,13 +454,13 @@ async def apply(
     if not (valid_pdf or valid_docx):
         raise HTTPException(422, "A valid PDF or DOCX resume is required")
     mime_type = "application/pdf" if valid_pdf else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    storage = settings.resume_storage_path.resolve()
-    storage.mkdir(parents=True, exist_ok=True)
-    key = storage / f"{uuid.uuid4()}{suffix}"
-    key.write_bytes(content)
+    try:
+        storage_key = save_resume(content, suffix, settings)
+    except StorageError as exc:
+        raise HTTPException(500, str(exc)) from exc
     record = Resume(
         applicant_id=user.id,
-        storage_key=str(key),
+        storage_key=storage_key,
         original_filename=filename,
         mime_type=mime_type,
         size_bytes=len(content),
@@ -456,7 +472,7 @@ async def apply(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        key.unlink(missing_ok=True)
+        delete_resume(storage_key, settings)
         raise HTTPException(409, "You have already applied to this job") from exc
     db.refresh(application)
     background.add_task(process_application, application.id)
@@ -597,10 +613,18 @@ def download_resume(
     )
     if not app or app.job.employer_id != user.id:
         raise HTTPException(404, "Application not found")
+    try:
+        content = read_resume(app.resume.storage_key, settings)
+    except StorageError as exc:
+        raise HTTPException(404, "Resume file not found") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
-    return FileResponse(
-        app.resume.storage_key, media_type=app.resume.mime_type, filename=app.resume.original_filename
+    return Response(
+        content,
+        media_type=app.resume.mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{app.resume.original_filename}"'
+        },
     )
 
 
@@ -897,15 +921,20 @@ def admin_download_resume(
     )
     if not application:
         raise HTTPException(404, "Application not found")
-    resume_path = Path(application.resume.storage_key)
-    if not resume_path.is_file():
-        raise HTTPException(404, "Resume file not found")
+    try:
+        content = read_resume(application.resume.storage_key, settings)
+    except StorageError as exc:
+        raise HTTPException(404, "Resume file not found") from exc
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
-    return FileResponse(
-        resume_path,
+    return Response(
+        content,
         media_type=application.resume.mime_type,
-        filename=application.resume.original_filename,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{application.resume.original_filename}"'
+            )
+        },
     )
 
 
