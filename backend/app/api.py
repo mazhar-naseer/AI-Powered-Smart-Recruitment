@@ -25,6 +25,7 @@ from app.models import (
     Application,
     ApplicationStatus,
     AuditLog,
+    CandidateTimeline,
     Job,
     JobStatus,
     RefreshSession,
@@ -33,6 +34,9 @@ from app.models import (
     ScoreOverride,
     User,
     UserStatus,
+    PipelineStage,
+    Notification,
+    OrganizationMembership,
 )
 from app.resume_processing import process_application
 from app.schemas import (
@@ -59,9 +63,17 @@ from app.security import (
     require_roles,
     verify_password,
 )
+from app.tenancy import create_workspace, ensure_membership, require_permission
+from app.object_storage import avatar_storage, resume_storage
+from app.background_jobs import queue_application_analysis, run_background_job
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
+
+
+def dispatch_background(background: BackgroundTasks, job_id: str) -> None:
+    if settings.inline_background_jobs:
+        background.add_task(run_background_job, job_id)
 
 
 def envelope(data=None, message: str = "Success") -> dict:
@@ -70,6 +82,8 @@ def envelope(data=None, message: str = "Success") -> dict:
 
 def job_dict(job: Job, count: int | None = None) -> dict:
     data = JobOut.model_validate(job).model_dump(mode="json")
+    if job.organization_id and job.organization:
+        data["employer"]["company_name"] = job.organization.name
     data["application_count"] = count if count is not None else len(job.applications)
     return data
 
@@ -110,7 +124,11 @@ def audit(
     target_type: str | None = None,
     target_id: str | None = None,
 ) -> None:
-    db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id))
+    organization_id = None
+    if actor:
+        actor_user = db.get(User, actor)
+        organization_id = actor_user.active_organization_id if actor_user else None
+    db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id, metadata_json={"organization_id": organization_id} if organization_id else {}))
 
 
 @router.post("/auth/register", status_code=201)
@@ -128,6 +146,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.flush()
+    if user.role == Role.EMPLOYER:
+        create_workspace(db, user, payload.company_name)
     _, dev_code = issue_email_verification(db, user)
     audit(db, user.id, "auth.register", "user", user.id)
     db.commit()
@@ -252,16 +272,12 @@ async def upload_profile_avatar(
     if not detected:
         raise HTTPException(415, "Only JPG, PNG, or WEBP profile photos are accepted")
     suffix, _mime = detected
-    storage = settings.avatar_storage_path.resolve()
-    storage.mkdir(parents=True, exist_ok=True)
-    destination = storage / f"{user.id}-{uuid.uuid4().hex}{suffix}"
-    destination.write_bytes(content)
-    previous = Path(user.avatar_path).resolve() if user.avatar_path else None
-    user.avatar_path = str(destination)
+    previous_key = user.avatar_path
+    user.avatar_path = avatar_storage.put(content, suffix)
     audit(db, user.id, "profile.avatar_updated", "user", user.id)
     db.commit()
-    if previous and previous.parent == storage and previous.is_file():
-        previous.unlink()
+    if previous_key:
+        avatar_storage.delete(previous_key)
     return envelope({"avatar_url": "/api/v1/profiles/me/avatar"}, "Profile photo updated")
 
 
@@ -269,8 +285,9 @@ async def upload_profile_avatar(
 def profile_avatar(user: User = Depends(current_user)):
     if not user.avatar_path:
         raise HTTPException(404, "Profile photo not found")
-    path = Path(user.avatar_path)
-    if not path.is_file() or path.resolve().parent != settings.avatar_storage_path.resolve():
+    try:
+        path = avatar_storage.path(user.avatar_path)
+    except FileNotFoundError:
         raise HTTPException(404, "Profile photo not found")
     mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
     return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
@@ -330,10 +347,11 @@ def employer_jobs(
     user: User = Depends(require_roles(Role.EMPLOYER)),
     db: Session = Depends(get_db),
 ):
+    membership = ensure_membership(db, user)
     stmt = (
         select(Job)
         .options(joinedload(Job.employer), joinedload(Job.applications))
-        .where(Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        .where(Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     )
     jobs = (
         db.scalars(
@@ -345,7 +363,7 @@ def employer_jobs(
     total = (
         db.scalar(
             select(func.count(Job.id)).where(
-                Job.employer_id == user.id, Job.status != JobStatus.DELETED
+                Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED
             )
         )
         or 0
@@ -366,7 +384,9 @@ def create_job(
     user: User = Depends(require_roles(Role.EMPLOYER)),
     db: Session = Depends(get_db),
 ):
-    job = Job(employer_id=user.id, **payload.model_dump())
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "jobs.manage", membership.organization_id)
+    job = Job(employer_id=user.id, organization_id=membership.organization_id, **payload.model_dump())
     db.add(job)
     audit(db, user.id, "job.created", "job", job.id)
     db.commit()
@@ -376,10 +396,12 @@ def create_job(
 
 
 def owned_job(job_id: str, user: User, db: Session) -> Job:
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "jobs.manage", membership.organization_id)
     job = db.scalar(
         select(Job)
         .options(joinedload(Job.employer), joinedload(Job.applications))
-        .where(Job.id == job_id, Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        .where(Job.id == job_id, Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     )
     if not job:
         raise HTTPException(404, "Job not found")
@@ -438,28 +460,32 @@ async def apply(
     if not (valid_pdf or valid_docx):
         raise HTTPException(422, "A valid PDF or DOCX resume is required")
     mime_type = "application/pdf" if valid_pdf else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    storage = settings.resume_storage_path.resolve()
-    storage.mkdir(parents=True, exist_ok=True)
-    key = storage / f"{uuid.uuid4()}{suffix}"
-    key.write_bytes(content)
+    key = resume_storage.put(content, suffix)
     record = Resume(
         applicant_id=user.id,
-        storage_key=str(key),
+        storage_key=key,
         original_filename=filename,
         mime_type=mime_type,
         size_bytes=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
     )
-    application = Application(job_id=job_id, applicant_id=user.id, resume=record)
+    default_stage = db.scalar(select(PipelineStage).where(PipelineStage.organization_id == job.organization_id, PipelineStage.is_default.is_(True)).order_by(PipelineStage.position)) if job.organization_id else None
+    application = Application(id=str(uuid.uuid4()), job_id=job_id, applicant_id=user.id, organization_id=job.organization_id, stage_id=default_stage.id if default_stage else None, resume=record)
     db.add(application)
+    if job.organization_id:
+        db.add(CandidateTimeline(organization_id=job.organization_id, application_id=application.id, actor_id=user.id, event_type="application_received", description=f"{user.full_name} applied for {job.title}."))
+        for membership in db.scalars(select(OrganizationMembership).where(OrganizationMembership.organization_id == job.organization_id, OrganizationMembership.status == "active")).all():
+            db.add(Notification(user_id=membership.user_id, organization_id=job.organization_id, type="new_candidate", title=f"New applicant for {job.title}", message=f"{user.full_name} submitted an application.", action_url=f"/employer/candidates/{application.id}"))
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        key.unlink(missing_ok=True)
+        resume_storage.delete(key)
         raise HTTPException(409, "You have already applied to this job") from exc
     db.refresh(application)
-    background.add_task(process_application, application.id)
+    queued = queue_application_analysis(db, application.id, job.organization_id)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "status": application.status.value},
         "Application accepted for processing",
@@ -520,7 +546,9 @@ def retry_application_processing(
     application.processing_error = None
     application.processed_at = None
     db.commit()
-    background.add_task(process_application, application.id)
+    queued = queue_application_analysis(db, application.id, application.organization_id)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "status": application.status.value},
         "Resume analysis restarted",
@@ -549,7 +577,9 @@ def retry_application_ai(
     application.ai_status = "processing"
     application.ai_error = None
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope({"id": application.id, "ai_status": "processing"}, "Gemini analysis restarted")
 
 
@@ -595,12 +625,13 @@ def download_resume(
         .options(joinedload(Application.job), joinedload(Application.resume))
         .where(Application.id == application_id)
     )
-    if not app or app.job.employer_id != user.id:
+    membership = ensure_membership(db, user)
+    if not app or app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
     return FileResponse(
-        app.resume.storage_key, media_type=app.resume.mime_type, filename=app.resume.original_filename
+        resume_storage.path(app.resume.storage_key), media_type=app.resume.mime_type, filename=app.resume.original_filename
     )
 
 
@@ -614,13 +645,17 @@ def employer_reanalyze_application(
     application = db.scalar(
         select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
     )
-    if not application or application.job.employer_id != user.id:
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "candidates.manage", membership.organization_id)
+    if not application or application.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     application.status = ApplicationStatus.PROCESSING
     application.processing_error = None
     audit(db, user.id, "application.reanalysis_requested", "application", application.id)
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope({"id": application.id, "status": "processing"}, "Advanced analysis restarted")
 
 
@@ -634,7 +669,8 @@ def override_application_score(
     application = db.scalar(
         select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
     )
-    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+    membership = ensure_membership(db, user) if user.role == Role.EMPLOYER else None
+    if not application or (user.role == Role.EMPLOYER and application.job.organization_id != membership.organization_id):
         raise HTTPException(404, "Application not found")
     previous = application.override_score if application.override_score is not None else application.final_score
     application.override_score = payload.score
@@ -654,7 +690,8 @@ def application_override_history(
     db: Session = Depends(get_db),
 ):
     application = db.scalar(select(Application).options(joinedload(Application.job)).where(Application.id == application_id))
-    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+    membership = ensure_membership(db, user) if user.role == Role.EMPLOYER else None
+    if not application or (user.role == Role.EMPLOYER and application.job.organization_id != membership.organization_id):
         raise HTTPException(404, "Application not found")
     history = db.scalars(select(ScoreOverride).where(ScoreOverride.application_id == application_id).order_by(ScoreOverride.created_at.desc())).all()
     return envelope([{"id": item.id, "previous_score": item.previous_score, "override_score": item.override_score, "reason": item.reason, "actor_id": item.actor_id, "created_at": item.created_at.isoformat()} for item in history])
@@ -664,8 +701,9 @@ def application_override_history(
 def employer_dashboard(
     user: User = Depends(require_roles(Role.EMPLOYER)), db: Session = Depends(get_db)
 ):
+    membership = ensure_membership(db, user)
     jobs = db.scalars(
-        select(Job).where(Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        select(Job).where(Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     ).all()
     job_ids = [job.id for job in jobs]
     apps = (
@@ -897,8 +935,9 @@ def admin_download_resume(
     )
     if not application:
         raise HTTPException(404, "Application not found")
-    resume_path = Path(application.resume.storage_key)
-    if not resume_path.is_file():
+    try:
+        resume_path = resume_storage.path(application.resume.storage_key)
+    except FileNotFoundError:
         raise HTTPException(404, "Resume file not found")
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
@@ -927,7 +966,9 @@ def admin_retry_application_ai(
     application.ai_error = None
     audit(db, admin.id, "admin.ai_analysis_restarted", "application", application.id)
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "ai_status": "processing"},
         "Gemini analysis restarted",

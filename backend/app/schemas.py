@@ -245,6 +245,52 @@ class ScoreOverrideRequest(BaseModel):
     reason: str = Field(min_length=10, max_length=2000)
 
 
+class TeamInviteRequest(BaseModel):
+    email: EmailStr
+    role: Literal["admin", "recruiter", "viewer"] = "recruiter"
+
+
+class WorkspaceSwitchRequest(BaseModel):
+    organization_id: str
+
+
+class MembershipRoleUpdate(BaseModel):
+    role: Literal["admin", "recruiter", "viewer"]
+
+
+class StageCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    color: str = Field(default="#3157d5", pattern=r"^#[0-9a-fA-F]{6}$")
+    category: Literal["active", "hired", "rejected"] = "active"
+
+
+class StageUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=80)
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    position: int | None = Field(default=None, ge=0)
+
+
+class CandidateMoveRequest(BaseModel):
+    stage_id: str
+
+
+class CandidateAssignRequest(BaseModel):
+    user_id: str | None = None
+
+
+class CandidateTagsRequest(BaseModel):
+    tags: list[str] = Field(max_length=30)
+
+    @field_validator("tags")
+    @classmethod
+    def clean_tags(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip()[:40] for value in values if value.strip()))
+
+
+class CandidateNoteRequest(BaseModel):
+    body: str = Field(min_length=2, max_length=5000)
+
+
 class Paginated(BaseModel):
     items: list
     total: int

@@ -7,6 +7,7 @@ from app.models import Application, ApplicationStatus
 from app.ai_provider import analyze_with_gemini
 from app.resume_parser import PARSER_VERSION, parse_resume, structured_profile
 from app.scoring import ANALYSIS_VERSION, advanced_score, hybrid_score
+from app.object_storage import resume_storage
 
 
 def sanitize_extracted_text(text: str) -> str:
@@ -26,7 +27,7 @@ def process_application(application_id: str, force: bool = False) -> None:
             parser_version = application.parser_version or PARSER_VERSION
         else:
             text, profile, parser_version = parse_resume(
-                Path(application.resume.storage_key),
+                resume_storage.path(application.resume.storage_key),
                 application.resume.mime_type,
                 application.job.required_skills,
                 application.job.domain_keywords or [],

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import router
+from app.ats_api import router as ats_router
 from app.config import get_settings
 from app.database import Base, engine
 
@@ -88,3 +89,4 @@ def ready():
 
 
 app.include_router(router)
+app.include_router(ats_router)

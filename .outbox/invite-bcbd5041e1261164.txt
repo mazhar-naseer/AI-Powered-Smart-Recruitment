@@ -1,0 +1,39 @@
+Subject: Join Test Corp on SmartHire
+From: tayyabbasra434@gmail.com
+To: revoked.ats@example.com
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============5058084905083362134=="
+
+--===============5058084905083362134==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Workspace Owner invited you to join Test Corp as recruiter.
+
+Accept invitation: http://localhost:5173/team/invitations/y7k7gFAXV1b4x98CJEF=
+Z92pZ0YRnHRXG1wVF-pCIXzI
+
+This invitation expires in 7 days.
+
+--===============5058084905083362134==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<!doctype html><html><body style=3D"margin:0;background:#f3f6fb;font-family:A=
+rial;color:#12234c"><table width=3D"100%"><tr><td align=3D"center" style=3D"p=
+adding:40px 16px"><table width=3D"600" style=3D"max-width:100%;background:#ff=
+f;border:1px solid #dce4f0;border-radius:16px"><tr><td style=3D"padding:28px;=
+background:#092966;color:#fff;font-size:24px;font-weight:800">SmartHire</td><=
+/tr><tr><td style=3D"padding:38px"><p style=3D"color:#087848;font-weight:700"=
+>RECRUITER TEAM INVITATION</p><h1>Join Test Corp</h1><p style=3D"color:#59677=
+f;line-height:1.7">Workspace Owner invited you to collaborate as <strong>recr=
+uiter</strong>.</p><p style=3D"margin:30px 0"><a href=3D"http://localhost:517=
+3/team/invitations/y7k7gFAXV1b4x98CJEFZ92pZ0YRnHRXG1wVF-pCIXzI" style=3D"padd=
+ing:14px 24px;border-radius:8px;background:#1744bd;color:#fff;text-decoration=
+:none;font-weight:700">Accept invitation</a></p><p style=3D"color:#8994a8;fon=
+t-size:12px">This secure invitation expires in seven days.</p></td></tr></tab=
+le></td></tr></table></body></html>
+
+--===============5058084905083362134==--

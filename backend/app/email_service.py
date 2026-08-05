@@ -88,6 +88,23 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
     return token, code
 
 
+def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:
+    link = f"{settings.frontend_url}/team/invitations/{token}"
+    message = EmailMessage()
+    message["Subject"] = f"Join {organization_name} on SmartHire"
+    message["From"] = settings.smtp_from_email
+    message["To"] = email
+    message.set_content(f"{inviter_name} invited you to join {organization_name} as {role}.\n\nAccept invitation: {link}\n\nThis invitation expires in 7 days.")
+    message.add_alternative(f"""<!doctype html><html><body style="margin:0;background:#f3f6fb;font-family:Arial;color:#12234c"><table width="100%"><tr><td align="center" style="padding:40px 16px"><table width="600" style="max-width:100%;background:#fff;border:1px solid #dce4f0;border-radius:16px"><tr><td style="padding:28px;background:#092966;color:#fff;font-size:24px;font-weight:800">SmartHire</td></tr><tr><td style="padding:38px"><p style="color:#087848;font-weight:700">RECRUITER TEAM INVITATION</p><h1>Join {escape(organization_name)}</h1><p style="color:#59677f;line-height:1.7">{escape(inviter_name)} invited you to collaborate as <strong>{escape(role)}</strong>.</p><p style="margin:30px 0"><a href="{escape(link,quote=True)}" style="padding:14px 24px;border-radius:8px;background:#1744bd;color:#fff;text-decoration:none;font-weight:700">Accept invitation</a></p><p style="color:#8994a8;font-size:12px">This secure invitation expires in seven days.</p></td></tr></table></td></tr></table></body></html>""",subtype="html")
+    if settings.smtp_host:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_use_tls:smtp.starttls()
+            if settings.smtp_username:smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(message)
+    else:
+        outbox=Path(".outbox");outbox.mkdir(exist_ok=True);(outbox/f"invite-{hashlib.sha256(email.encode()).hexdigest()[:16]}.txt").write_text(message.as_string(),encoding="utf-8")
+
+
 def consume_verification(db: Session, *, email: str | None, code: str | None, token: str | None) -> User | None:
     query = None
     if token:

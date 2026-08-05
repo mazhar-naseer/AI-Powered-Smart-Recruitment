@@ -48,6 +48,20 @@ class ApplicationStatus(enum.StrEnum):
     WITHDRAWN = "withdrawn"
 
 
+class MembershipRole(enum.StrEnum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    RECRUITER = "recruiter"
+    VIEWER = "viewer"
+
+
+class BackgroundJobStatus(enum.StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -89,6 +103,7 @@ class User(TimestampMixin, Base):
     founded_year: Mapped[int | None] = mapped_column(Integer)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
+    active_organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="employer", cascade="all, delete-orphan"
     )
@@ -101,10 +116,44 @@ class User(TimestampMixin, Base):
         return "/api/v1/profiles/me/avatar" if self.avatar_path else None
 
 
+class Organization(TimestampMixin, Base):
+    __tablename__ = "organizations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    slug: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    settings_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class OrganizationMembership(TimestampMixin, Base):
+    __tablename__ = "organization_memberships"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[MembershipRole] = mapped_column(Enum(MembershipRole, values_callable=lambda values: [item.value for item in values]), default=MembershipRole.RECRUITER, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    organization: Mapped[Organization] = relationship()
+    user: Mapped[User] = relationship()
+    __table_args__ = (UniqueConstraint("organization_id", "user_id", name="uq_membership_organization_user"),)
+
+
+class OrganizationInvitation(TimestampMixin, Base):
+    __tablename__ = "organization_invitations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[MembershipRole] = mapped_column(Enum(MembershipRole, values_callable=lambda values: [item.value for item in values]), default=MembershipRole.RECRUITER)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    invited_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Job(TimestampMixin, Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     employer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
     title: Mapped[str] = mapped_column(String(180), index=True)
     description: Mapped[str] = mapped_column(Text)
     required_skills: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -120,6 +169,7 @@ class Job(TimestampMixin, Base):
     salary_min: Mapped[int | None] = mapped_column(Integer)
     salary_max: Mapped[int | None] = mapped_column(Integer)
     employer: Mapped[User] = relationship(back_populates="jobs")
+    organization: Mapped[Organization | None] = relationship()
     applications: Mapped[list["Application"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -144,6 +194,10 @@ class Application(TimestampMixin, Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
     applicant_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     resume_id: Mapped[str] = mapped_column(ForeignKey("resumes.id"))
+    organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    stage_id: Mapped[str | None] = mapped_column(ForeignKey("pipeline_stages.id"), index=True)
+    assigned_to_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    candidate_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ApplicationStatus] = mapped_column(
         Enum(ApplicationStatus), default=ApplicationStatus.PROCESSING, index=True
     )
@@ -188,6 +242,70 @@ class ScoreOverride(Base):
     previous_score: Mapped[float | None] = mapped_column(Float)
     override_score: Mapped[float] = mapped_column(Float)
     reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PipelineStage(TimestampMixin, Base):
+    __tablename__ = "pipeline_stages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    color: Mapped[str] = mapped_column(String(20), default="#3157d5")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    category: Mapped[str] = mapped_column(String(30), default="active")
+    is_default: Mapped[bool] = mapped_column(default=False)
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_pipeline_stage_name"),)
+
+
+class CandidateNote(TimestampMixin, Base):
+    __tablename__ = "candidate_notes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    visibility: Mapped[str] = mapped_column(String(20), default="team")
+    author: Mapped[User] = relationship()
+
+
+class CandidateTimeline(Base):
+    __tablename__ = "candidate_timeline"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    description: Mapped[str] = mapped_column(String(500))
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    type: Mapped[str] = mapped_column(String(60), index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    message: Mapped[str] = mapped_column(String(500))
+    action_url: Mapped[str | None] = mapped_column(String(500))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    job_type: Mapped[str] = mapped_column(String(80), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[BackgroundJobStatus] = mapped_column(Enum(BackgroundJobStatus, values_callable=lambda values: [item.value for item in values]), default=BackgroundJobStatus.QUEUED, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
