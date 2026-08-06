@@ -6,9 +6,10 @@ not resolvable for the first few seconds of a container's life. Running
 deploy dies with "failed to resolve host" and then crash-loops, because every
 restart lands in the same window.
 
-Waiting here turns that hard failure into a few seconds of startup delay. A
-genuinely wrong host or credential still fails, but after the timeout and with a
-readable message rather than a SQLAlchemy traceback.
+Waiting here turns that hard failure into a few seconds of startup delay. Three
+attempts are made, each capped at a 60-second connection timeout. A genuinely
+wrong host or credential still fails, but with a readable message rather than a
+SQLAlchemy traceback.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from sqlalchemy import create_engine, text
 
 from app.config import get_settings
 
-TIMEOUT_SECONDS = 90
+MAX_ATTEMPTS = 3
+CONNECT_TIMEOUT_SECONDS = 60
 RETRY_SECONDS = 2
 
 
@@ -35,11 +37,12 @@ def main() -> int:
     if not url.strip():
         print(
             "DATABASE_URL is empty.\n"
-            "In Railway this usually means a reference variable resolved to "
-            "nothing — the service name matched but the variable it points at "
-            "does not exist. Set DATABASE_URL on the backend *service* itself "
-            "rather than in shared project variables, using the Variables tab's "
-            "'Add Reference' button.",
+            "In Railway this means a reference variable resolved to nothing — "
+            "the service name matched but the variable it points at does not "
+            "exist. Railway's Postgres template exposes DATABASE_PRIVATE_URL "
+            "and (only once public access is enabled) DATABASE_PUBLIC_URL. "
+            "There is no plain DATABASE_URL to reference. Set:\n"
+            "  DATABASE_URL=${{ Postgres.DATABASE_PRIVATE_URL }}",
             file=sys.stderr,
         )
         return 1
@@ -55,25 +58,30 @@ def main() -> int:
         )
         return 1
 
-    engine = create_engine(url, pool_pre_ping=True)
-    deadline = time.monotonic() + TIMEOUT_SECONDS
-    attempt = 0
+    # connect_timeout caps each individual attempt. Without it a black-holed
+    # host hangs on the TCP handshake until the kernel gives up, which is far
+    # longer than 60s and would stall the deploy rather than fail it.
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+    )
     last_error: Exception | None = None
 
     try:
-        while time.monotonic() < deadline:
-            attempt += 1
+        for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 with engine.connect() as connection:
                     connection.execute(text("SELECT 1"))
             except Exception as exc:
                 last_error = exc
                 print(
-                    f"Attempt {attempt}: database not ready "
-                    f"({exc.__class__.__name__}); retrying in {RETRY_SECONDS}s.",
+                    f"Attempt {attempt}/{MAX_ATTEMPTS}: database not ready "
+                    f"({exc.__class__.__name__}).",
                     flush=True,
                 )
-                time.sleep(RETRY_SECONDS)
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(RETRY_SECONDS)
             else:
                 print(f"Database reachable after {attempt} attempt(s).", flush=True)
                 return 0
@@ -81,7 +89,8 @@ def main() -> int:
         engine.dispose()
 
     print(
-        f"Database unreachable after {TIMEOUT_SECONDS}s. Last error: {last_error}",
+        f"Database unreachable after {MAX_ATTEMPTS} attempts "
+        f"({CONNECT_TIMEOUT_SECONDS}s timeout each). Last error: {last_error}",
         file=sys.stderr,
     )
     return 1
