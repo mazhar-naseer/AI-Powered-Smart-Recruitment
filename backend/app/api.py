@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -69,6 +70,7 @@ from app.background_jobs import queue_application_analysis, run_background_job
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def dispatch_background(background: BackgroundTasks, job_id: str) -> None:
@@ -472,6 +474,9 @@ async def apply(
     default_stage = db.scalar(select(PipelineStage).where(PipelineStage.organization_id == job.organization_id, PipelineStage.is_default.is_(True)).order_by(PipelineStage.position)) if job.organization_id else None
     application = Application(id=str(uuid.uuid4()), job_id=job_id, applicant_id=user.id, organization_id=job.organization_id, stage_id=default_stage.id if default_stage else None, resume=record)
     db.add(application)
+    # Persist the application before timeline and notification rows so PostgreSQL
+    # can validate their foreign keys deterministically during the same transaction.
+    db.flush()
     if job.organization_id:
         db.add(CandidateTimeline(organization_id=job.organization_id, application_id=application.id, actor_id=user.id, event_type="application_received", description=f"{user.full_name} applied for {job.title}."))
         for membership in db.scalars(select(OrganizationMembership).where(OrganizationMembership.organization_id == job.organization_id, OrganizationMembership.status == "active")).all():
@@ -481,7 +486,11 @@ async def apply(
     except IntegrityError as exc:
         db.rollback()
         resume_storage.delete(key)
-        raise HTTPException(409, "You have already applied to this job") from exc
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint == "uq_application_job_applicant":
+            raise HTTPException(409, "You have already applied to this job") from exc
+        logger.exception("Application creation failed due to database integrity constraint %s", constraint)
+        raise HTTPException(500, "Application could not be created. Please try again.") from exc
     db.refresh(application)
     queued = queue_application_analysis(db, application.id, job.organization_id)
     db.commit()
