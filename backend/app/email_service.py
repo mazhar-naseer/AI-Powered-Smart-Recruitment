@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 import smtplib
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from app.config import get_settings
 from app.models import EmailVerification, User
 
 settings = get_settings()
+logger = logging.getLogger("email")
 
 
 def _hash(value: str) -> str:
@@ -75,7 +77,7 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
     if settings.smtp_host:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=60) as smtp:
             if settings.smtp_use_tls:
                 smtp.starttls()
             if settings.smtp_username:
