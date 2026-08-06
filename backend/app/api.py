@@ -138,15 +138,21 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.flush()
-    _, dev_code = issue_email_verification(db, user)
+    _, dev_code, delivered = issue_email_verification(db, user)
     audit(db, user.id, "auth.register", "user", user.id)
     db.commit()
     db.refresh(user)
     data = UserOut.model_validate(user).model_dump(mode="json")
     data["verification_required"] = True
+    data["verification_email_sent"] = delivered
     if settings.environment == "development" and not settings.smtp_host:
         data["dev_verification_code"] = dev_code
-    return envelope(data, "Account created. Check your email to verify it.")
+    return envelope(
+        data,
+        "Account created. Check your email to verify it."
+        if delivered
+        else "Account created, but the verification email could not be sent. Request a new one.",
+    )
 
 
 @router.post("/auth/verify-email")
@@ -167,7 +173,7 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
     user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
     dev_code = None
     if user and not user.email_verified:
-        _, dev_code = issue_email_verification(db, user)
+        _, dev_code, _ = issue_email_verification(db, user)
         db.commit()
     data = {"dev_verification_code": dev_code} if settings.environment == "development" and not settings.smtp_host and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")

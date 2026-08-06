@@ -63,7 +63,52 @@ def build_verification_message(user: User, code: str, link: str) -> EmailMessage
     return message
 
 
-def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
+def _send_over_smtp(message: EmailMessage) -> None:
+    # Port 465 is implicit TLS: the handshake happens before any SMTP command, so
+    # STARTTLS on that port fails. Ports 587 and 25 upgrade an existing plaintext
+    # connection instead. Choosing on the port rather than on smtp_use_tls alone
+    # means a 465 provider works without a second, easily-forgotten setting.
+    if settings.smtp_port == 465:
+        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=200)
+    else:
+        client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=200)
+    with client as smtp:
+        if settings.smtp_use_tls and settings.smtp_port != 465:
+            smtp.starttls()
+        if settings.smtp_username:
+            smtp.login(settings.smtp_username, settings.smtp_password or "")
+        smtp.send_message(message)
+
+
+def _deliver(message: EmailMessage, user: User) -> bool:
+    """Send the message, returning whether it actually left the process.
+
+    Never raises. Delivery is a side effect of registration, not part of it: a
+    refused login, a blocked port, or a provider timeout must not undo an
+    otherwise valid signup. The caller decides how to tell the user.
+    """
+    if settings.smtp_host:
+        try:
+            _send_over_smtp(message)
+        except Exception:
+            # Recipient only, never the code or token — this log is not a safe
+            # place for a credential that grants account access.
+            logger.exception("Verification email to %s could not be sent", user.email)
+            return False
+        return True
+
+    # No SMTP configured. Local development reads these files; on an ephemeral
+    # host they are only a breadcrumb, so a failed write is not worth an error.
+    try:
+        outbox = Path(".outbox")
+        outbox.mkdir(exist_ok=True)
+        (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
+    except OSError:
+        logger.warning("SMTP_HOST is unset and the .outbox fallback is not writable")
+    return False
+
+
+def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
     token, code = secrets.token_urlsafe(32), f"{secrets.randbelow(1_000_000):06d}"
     db.execute(
         update(EmailVerification)
@@ -76,18 +121,7 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
     ))
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
-    if settings.smtp_host:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=60) as smtp:
-            if settings.smtp_use_tls:
-                smtp.starttls()
-            if settings.smtp_username:
-                smtp.login(settings.smtp_username, settings.smtp_password or "")
-            smtp.send_message(message)
-    else:
-        outbox = Path(".outbox")
-        outbox.mkdir(exist_ok=True)
-        (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
-    return token, code
+    return token, code, _deliver(message, user)
 
 
 def consume_verification(db: Session, *, email: str | None, code: str | None, token: str | None) -> User | None:
