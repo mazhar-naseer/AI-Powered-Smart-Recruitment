@@ -8,7 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000
+    PORT=8000 \
+    # Running `python scripts/foo.py` puts /app/scripts on sys.path, not /app,
+    # so the `app` package is not importable. Uvicorn and Alembic each add the
+    # working directory themselves; plain scripts do not.
+    PYTHONPATH=/app
 
 WORKDIR /app
 
