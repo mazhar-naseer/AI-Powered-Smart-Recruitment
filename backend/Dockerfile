@@ -33,6 +33,9 @@ USER smarthire
 EXPOSE 8000
 
 # Railway injects PORT at runtime; 8000 is the local fallback.
-CMD sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"
+# wait_for_db.py guards against Railway's private-network DNS being unresolvable
+# for the first seconds of container life, which would otherwise crash-loop the
+# deploy before migrations could run.
+CMD sh -c "python scripts/wait_for_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"
 
 
