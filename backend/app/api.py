@@ -123,7 +123,7 @@ def audit(
     db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id))
 
 
-@router.post("/auth/register", status_code=201)
+@router.post("/auth/register", status_code=201)   
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = payload.email.lower().strip()
     if db.scalar(select(User).where(User.email == email)):
