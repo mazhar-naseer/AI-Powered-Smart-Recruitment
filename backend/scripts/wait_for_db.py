@@ -14,6 +14,7 @@ SQLAlchemy traceback.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -35,14 +36,22 @@ def main() -> int:
     # points at a missing variable arrives empty. Both die deep inside
     # SQLAlchemy's URL parser, so catch them here where the cause is obvious.
     if not url.strip():
+        # Names only, never values — these logs are not a safe place for a
+        # password, and the name alone is enough to see what reached the
+        # container.
+        visible = sorted(
+            name
+            for name in os.environ
+            if "DATABASE" in name.upper() or name.upper().startswith("PG")
+        )
         print(
             "DATABASE_URL is empty.\n"
-            "In Railway this means a reference variable resolved to nothing — "
-            "the service name matched but the variable it points at does not "
-            "exist. Railway's Postgres template exposes DATABASE_PRIVATE_URL "
-            "and (only once public access is enabled) DATABASE_PUBLIC_URL. "
-            "There is no plain DATABASE_URL to reference. Set:\n"
-            "  DATABASE_URL=${{ Postgres.DATABASE_PRIVATE_URL }}",
+            "A Railway reference resolved to nothing, which means the service "
+            "name or the variable name in it does not exist. Check the exact "
+            "service name on the project canvas — Railway appends a random "
+            "suffix, so it may be 'Postgres-aBcD' rather than 'Postgres'.\n"
+            "Database-related variables visible in this container: "
+            f"{visible or 'none'}",
             file=sys.stderr,
         )
         return 1
