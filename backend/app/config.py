@@ -28,12 +28,20 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     log_level: str = "INFO"
     frontend_url: str = "http://localhost:5173"
+    # Brevo delivers over HTTPS. Prefer it on hosts that block outbound SMTP:
+    # Railway blocks ports 25/465/587/2525 below the Pro plan, where smtplib
+    # fails with "Network is unreachable" no matter how SMTP_* is configured.
+    brevo_api_key: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_from_email: str = "no-reply@smarthire.local"
+    smtp_from_name: str = "SmartHire"
     smtp_use_tls: bool = True
+    # A blocked port drops packets rather than refusing them, so a generous
+    # timeout is spent in full on every send. Registration waits on this.
+    smtp_timeout_seconds: int = 15
     email_verification_minutes: int = 30
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"

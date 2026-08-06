@@ -1,7 +1,9 @@
 import hashlib
+import json
 import logging
 import secrets
 import smtplib
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from html import escape
@@ -63,15 +65,39 @@ def build_verification_message(user: User, code: str, link: str) -> EmailMessage
     return message
 
 
+def _send_over_brevo(message: EmailMessage) -> None:
+    """Hand the message to Brevo's HTTPS transactional endpoint.
+
+    Plain urllib, matching app.ai_provider — one HTTPS POST does not justify a
+    dependency. urlopen raises HTTPError on a non-2xx, so a rejected sender or a
+    bad key surfaces as an exception rather than a silent no-op.
+    """
+    payload = {
+        "sender": {"email": settings.smtp_from_email, "name": settings.smtp_from_name},
+        "to": [{"email": message["To"]}],
+        "subject": message["Subject"],
+        "textContent": message.get_body(preferencelist=("plain",)).get_content(),
+        "htmlContent": message.get_body(preferencelist=("html",)).get_content(),
+    }
+    request = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "api-key": settings.brevo_api_key},
+    )
+    with urllib.request.urlopen(request, timeout=settings.smtp_timeout_seconds):
+        pass
+
+
 def _send_over_smtp(message: EmailMessage) -> None:
     # Port 465 is implicit TLS: the handshake happens before any SMTP command, so
     # STARTTLS on that port fails. Ports 587 and 25 upgrade an existing plaintext
     # connection instead. Choosing on the port rather than on smtp_use_tls alone
     # means a 465 provider works without a second, easily-forgotten setting.
+    timeout = settings.smtp_timeout_seconds
     if settings.smtp_port == 465:
-        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=200)
+        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=timeout)
     else:
-        client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=200)
+        client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout)
     with client as smtp:
         if settings.smtp_use_tls and settings.smtp_port != 465:
             smtp.starttls()
@@ -87,9 +113,12 @@ def _deliver(message: EmailMessage, user: User) -> bool:
     refused login, a blocked port, or a provider timeout must not undo an
     otherwise valid signup. The caller decides how to tell the user.
     """
-    if settings.smtp_host:
+    # Brevo wins when both are set. SMTP is unreachable on the hosts that make
+    # an HTTPS provider necessary, so trying it first would only add a timeout.
+    transport = _send_over_brevo if settings.brevo_api_key else _send_over_smtp
+    if settings.brevo_api_key or settings.smtp_host:
         try:
-            _send_over_smtp(message)
+            transport(message)
         except Exception:
             # Recipient only, never the code or token — this log is not a safe
             # place for a credential that grants account access.
@@ -97,14 +126,15 @@ def _deliver(message: EmailMessage, user: User) -> bool:
             return False
         return True
 
-    # No SMTP configured. Local development reads these files; on an ephemeral
-    # host they are only a breadcrumb, so a failed write is not worth an error.
+    # No provider configured. Local development reads these files; on an
+    # ephemeral host they are only a breadcrumb, so a failed write is not worth
+    # an error.
     try:
         outbox = Path(".outbox")
         outbox.mkdir(exist_ok=True)
         (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
     except OSError:
-        logger.warning("SMTP_HOST is unset and the .outbox fallback is not writable")
+        logger.warning("No email provider is configured and .outbox is not writable")
     return False
 
 

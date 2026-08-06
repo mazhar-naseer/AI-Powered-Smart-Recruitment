@@ -52,7 +52,12 @@ def _cloudinary_enabled(settings: Settings) -> bool:
 
 
 def _configure(settings: Settings):
+    # cloudinary's __init__ does not pull in its submodules, so `import
+    # cloudinary` alone leaves cloudinary.uploader and cloudinary.utils
+    # unbound. Every call site here reaches for one of the two.
     import cloudinary
+    import cloudinary.uploader  # noqa: F401
+    import cloudinary.utils  # noqa: F401
 
     cloudinary.config(
         cloud_name=settings.cloudinary_cloud_name,
