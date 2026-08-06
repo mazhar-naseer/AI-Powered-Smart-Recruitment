@@ -61,7 +61,17 @@ class UserOut(ORMModel):
     company_description: str | None = None
     founded_year: int | None = None
     email_verified: bool
+    notification_preferences: dict[str, bool] = Field(default_factory=dict)
     created_at: datetime
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    new_applications: bool | None = None
+    application_status_changes: bool | None = None
+    assignments: bool | None = None
+    interviews_offers: bool | None = None
+    ai_analysis_updates: bool | None = None
+    weekly_summary: bool | None = None
 
 
 class AuthOut(BaseModel):

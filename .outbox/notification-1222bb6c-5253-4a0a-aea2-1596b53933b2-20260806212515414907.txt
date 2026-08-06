@@ -1,0 +1,44 @@
+Subject: New applicant for Backend Engineer | SmartHire
+From: tayyabbasra434@gmail.com
+To: employer@example.com
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============2614507737924786885=="
+
+--===============2614507737924786885==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Employer,
+
+Applicant submitted an application.
+
+Open SmartHire: http://localhost:5173/employer/candidates/c21044b0-0f62-4a63-=
+8270-d794de0d71aa
+
+You can manage email preferences in Notification Center.
+
+--===============2614507737924786885==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<!doctype html><html><body style=3D"margin:0;background:#f3f6fb;font-family:A=
+rial;color:#10204a"><table width=3D"100%"><tr><td align=3D"center" style=3D"p=
+adding:36px 16px"><table width=3D"620" style=3D"max-width:100%;background:#ff=
+f;border:1px solid #dce5f1;border-radius:16px"><tr><td style=3D"padding:26px =
+34px;background:#082b68;color:white;font-size:23px;font-weight:800">SmartHire=
+</td></tr><tr><td style=3D"padding:36px 34px"><div style=3D"color:#07925a;fon=
+t-size:12px;font-weight:800;letter-spacing:1px">ACCOUNT NOTIFICATION</div><h1=
+ style=3D"font-size:26px;margin:14px 0;color:#10204a">New applicant for Backe=
+nd Engineer</h1><p style=3D"font-size:16px;line-height:1.7;color:#59677f">Hel=
+lo Employer,</p><p style=3D"font-size:16px;line-height:1.7;color:#59677f">App=
+licant submitted an application.</p><p style=3D"margin:30px 0"><a href=3D"htt=
+p://localhost:5173/employer/candidates/c21044b0-0f62-4a63-8270-d794de0d71aa" =
+style=3D"display:inline-block;padding:14px 24px;background:#1744bd;color:#fff=
+;text-decoration:none;border-radius:8px;font-weight:700">View in SmartHire</a=
+></p><p style=3D"font-size:12px;color:#8994a8">Manage which events are emaile=
+d from your SmartHire Notification Center.</p></td></tr></table></td></tr></t=
+able></body></html>
+
+--===============2614507737924786885==--

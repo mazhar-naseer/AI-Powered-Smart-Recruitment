@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     DateTime,
     Enum,
@@ -21,6 +22,17 @@ from app.database import Base
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def default_notification_preferences() -> dict[str, bool]:
+    return {
+        "new_applications": True,
+        "application_status_changes": True,
+        "assignments": True,
+        "interviews_offers": True,
+        "ai_analysis_updates": False,
+        "weekly_summary": False,
+    }
 
 
 class Role(enum.StrEnum):
@@ -104,6 +116,7 @@ class User(TimestampMixin, Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     email_verified: Mapped[bool] = mapped_column(default=False, index=True)
     active_organization_id: Mapped[str | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    notification_preferences: Mapped[dict] = mapped_column(JSON, default=default_notification_preferences)
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="employer", cascade="all, delete-orphan"
     )
@@ -306,6 +319,81 @@ class BackgroundJob(Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrganizationSubscription(TimestampMixin, Base):
+    __tablename__ = "organization_subscriptions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), unique=True, index=True)
+    plan_key: Mapped[str] = mapped_column(String(40), default="starter", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="trialing", index=True)
+    billing_provider: Mapped[str] = mapped_column(String(40), default="manual")
+    external_customer_id: Mapped[str | None] = mapped_column(String(180), unique=True)
+    external_subscription_id: Mapped[str | None] = mapped_column(String(180), unique=True)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class UsageCounter(Base):
+    __tablename__ = "usage_counters"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    metric: Mapped[str] = mapped_column(String(80), index=True)
+    period_key: Mapped[str] = mapped_column(String(10), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    __table_args__ = (UniqueConstraint("organization_id", "metric", "period_key", name="uq_usage_org_metric_period"),)
+
+
+class BillingEvent(Base):
+    __tablename__ = "billing_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    provider_event_id: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="processed")
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    intent: Mapped[str] = mapped_column(String(20))
+    requested_role: Mapped[str] = mapped_column(String(20))
+    code_verifier: Mapped[str] = mapped_column(String(180))
+    return_to: Mapped[str] = mapped_column(String(500))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SocialIdentity(Base):
+    __tablename__ = "social_identities"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    provider_subject: Mapped[str] = mapped_column(String(255))
+    provider_email: Mapped[str] = mapped_column(String(320), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_subject", name="uq_social_provider_subject"),
+        UniqueConstraint("user_id", "provider", name="uq_social_user_provider"),
+    )
+
+
+class OAuthLoginCode(Base):
+    __tablename__ = "oauth_login_codes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

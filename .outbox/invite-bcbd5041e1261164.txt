@@ -3,20 +3,20 @@ From: tayyabbasra434@gmail.com
 To: revoked.ats@example.com
 MIME-Version: 1.0
 Content-Type: multipart/alternative;
- boundary="===============5058084905083362134=="
+ boundary="===============4539183005215707743=="
 
---===============5058084905083362134==
+--===============4539183005215707743==
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 
 Workspace Owner invited you to join Test Corp as recruiter.
 
-Accept invitation: http://localhost:5173/team/invitations/y7k7gFAXV1b4x98CJEF=
-Z92pZ0YRnHRXG1wVF-pCIXzI
+Accept invitation: http://localhost:5173/team/invitations/fi9FXjZIwgWmv2t-Xah=
+s8Gku5elR2SSt0HDTFvEjYqo
 
 This invitation expires in 7 days.
 
---===============5058084905083362134==
+--===============4539183005215707743==
 Content-Type: text/html; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 MIME-Version: 1.0
@@ -30,10 +30,10 @@ background:#092966;color:#fff;font-size:24px;font-weight:800">SmartHire</td><=
 >RECRUITER TEAM INVITATION</p><h1>Join Test Corp</h1><p style=3D"color:#59677=
 f;line-height:1.7">Workspace Owner invited you to collaborate as <strong>recr=
 uiter</strong>.</p><p style=3D"margin:30px 0"><a href=3D"http://localhost:517=
-3/team/invitations/y7k7gFAXV1b4x98CJEFZ92pZ0YRnHRXG1wVF-pCIXzI" style=3D"padd=
+3/team/invitations/fi9FXjZIwgWmv2t-Xahs8Gku5elR2SSt0HDTFvEjYqo" style=3D"padd=
 ing:14px 24px;border-radius:8px;background:#1744bd;color:#fff;text-decoration=
 :none;font-weight:700">Accept invitation</a></p><p style=3D"color:#8994a8;fon=
 t-size:12px">This secure invitation expires in seven days.</p></td></tr></tab=
 le></td></tr></table></body></html>
 
---===============5058084905083362134==--
+--===============4539183005215707743==--

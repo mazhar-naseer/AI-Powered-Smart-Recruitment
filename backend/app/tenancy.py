@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import MembershipRole, Organization, OrganizationMembership, PipelineStage, User
+from app.saas import ensure_subscription
 
 PERMISSIONS = {
     MembershipRole.OWNER: {"organization.manage", "team.manage", "jobs.manage", "candidates.manage", "candidates.comment", "analytics.view"},
@@ -32,6 +33,7 @@ def create_workspace(db: Session, owner: User, name: str | None = None) -> Organ
     organization = Organization(name=(name or owner.company_name or f"{owner.full_name}'s Company").strip(), slug=_slug(name or owner.company_name or owner.full_name))
     db.add(organization)
     db.flush()
+    ensure_subscription(db, organization.id)
     membership = OrganizationMembership(organization_id=organization.id, user_id=owner.id, role=MembershipRole.OWNER)
     db.add(membership)
     owner.active_organization_id = organization.id
@@ -42,7 +44,7 @@ def create_workspace(db: Session, owner: User, name: str | None = None) -> Organ
 
 
 def membership_for(db: Session, user: User, organization_id: str | None = None) -> OrganizationMembership | None:
-    stmt = select(OrganizationMembership).where(OrganizationMembership.user_id == user.id, OrganizationMembership.status == "active")
+    stmt = select(OrganizationMembership).join(Organization).where(OrganizationMembership.user_id == user.id, OrganizationMembership.status == "active", Organization.status == "active")
     selected = organization_id or user.active_organization_id
     if selected:
         stmt = stmt.where(OrganizationMembership.organization_id == selected)

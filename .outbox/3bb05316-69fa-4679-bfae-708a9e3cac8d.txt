@@ -1,0 +1,93 @@
+Subject: 583136 is your SmartHire verification code
+From: tayyabbasra434@gmail.com
+To: profile.applicant@example.com
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============5801068978531042972=="
+
+--===============5801068978531042972==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Alex Applicant,
+
+Welcome to SmartHire. Verify your email address to activate your account.
+
+Verification code: 583136
+
+Verify your account: http://localhost:5173/verify-email?token=3De40jUgpVQvmBk=
+4hCC8MtB8eaK2XDX6ns77UeZBbtoRk
+
+This code and link expire in 30 minutes. If you did not create a SmartHire ac=
+count, you can safely ignore this email.
+
+SmartHire Security Team
+
+--===============5801068978531042972==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<!doctype html>
+<html lang=3D"en"><head><meta charset=3D"utf-8"><meta name=3D"viewport" conte=
+nt=3D"width=3Ddevice-width,initial-scale=3D1"><title>Verify your SmartHire ac=
+count</title></head>
+<body style=3D"margin:0;padding:0;background:#f3f6fb;font-family:Arial,Helvet=
+ica,sans-serif;color:#111d45;">
+<div style=3D"display:none;max-height:0;overflow:hidden;opacity:0;">Your Smar=
+tHire verification code is 583136. It expires in 30 minutes.</div>
+<table role=3D"presentation" width=3D"100%" cellspacing=3D"0" cellpadding=3D"=
+0" border=3D"0" style=3D"background:#f3f6fb;"><tr><td align=3D"center" style=
+=3D"padding:36px 16px;">
+<table role=3D"presentation" width=3D"100%" cellspacing=3D"0" cellpadding=3D"=
+0" border=3D"0" style=3D"max-width:620px;background:#fff;border:1px solid #dd=
+e5f1;border-radius:18px;overflow:hidden;box-shadow:0 12px 32px rgba(10,39,94,=
+.10);">
+<tr><td style=3D"padding:30px 38px;background:#06265f;"><table role=3D"presen=
+tation" cellspacing=3D"0" cellpadding=3D"0" border=3D"0"><tr><td style=3D"wid=
+th:42px;height:42px;text-align:center;border-radius:12px;background:#0a9b62;c=
+olor:#fff;font-size:23px;font-weight:800;">S</td><td style=3D"padding-left:12=
+px;color:#fff;font-size:24px;font-weight:800;letter-spacing:-.4px;">SmartHire=
+</td></tr></table></td></tr>
+<tr><td style=3D"padding:42px 38px 34px;">
+<div style=3D"display:inline-block;padding:7px 12px;border-radius:999px;backg=
+round:#eaf8f1;color:#087848;font-size:12px;font-weight:700;letter-spacing:.4p=
+x;text-transform:uppercase;">Secure account verification</div>
+<h1 style=3D"margin:22px 0 12px;color:#0b1f4f;font-size:30px;line-height:1.2;=
+letter-spacing:-.7px;">Confirm your email address</h1>
+<p style=3D"margin:0 0 18px;color:#4d5b75;font-size:16px;line-height:1.7;">He=
+llo Alex Applicant,</p>
+<p style=3D"margin:0;color:#4d5b75;font-size:16px;line-height:1.7;">Welcome t=
+o SmartHire. Use the code below to activate your account and securely continu=
+e your hiring journey.</p>
+<div style=3D"margin:30px 0;padding:24px;text-align:center;border:1px solid #=
+dce5f3;border-radius:14px;background:#f7f9fd;"><div style=3D"margin-bottom:10=
+px;color:#6b7790;font-size:12px;font-weight:700;letter-spacing:1.2px;text-tra=
+nsform:uppercase;">Verification code</div><div style=3D"color:#1236b5;font-si=
+ze:36px;font-weight:800;letter-spacing:9px;line-height:1.2;">583136</div></di=
+v>
+<table role=3D"presentation" width=3D"100%" cellspacing=3D"0" cellpadding=3D"=
+0" border=3D"0"><tr><td align=3D"center"><a href=3D"http://localhost:5173/ver=
+ify-email?token=3De40jUgpVQvmBk4hCC8MtB8eaK2XDX6ns77UeZBbtoRk" style=3D"displ=
+ay:inline-block;padding:15px 28px;border-radius:9px;background:#1236b5;color:=
+#fff;text-decoration:none;font-size:15px;font-weight:700;">Verify my account<=
+/a></td></tr></table>
+<p style=3D"margin:26px 0 0;color:#6b7790;font-size:13px;line-height:1.6;text=
+-align:center;">This code and verification link expire in <strong>30 minutes<=
+/strong>.</p>
+<div style=3D"margin-top:28px;padding:18px;border-radius:10px;background:#fff=
+8e8;color:#72531b;font-size:13px;line-height:1.6;"><strong>Security notice:</=
+strong> SmartHire will never ask you to share this code. If you did not creat=
+e this account, you can safely ignore this email.</div>
+<p style=3D"margin:28px 0 0;color:#7a859b;font-size:12px;line-height:1.6;word=
+-break:break-all;">Button not working? Copy and paste this link into your bro=
+wser:<br><a href=3D"http://localhost:5173/verify-email?token=3De40jUgpVQvmBk4=
+hCC8MtB8eaK2XDX6ns77UeZBbtoRk" style=3D"color:#1236b5;">http://localhost:5173=
+/verify-email?token=3De40jUgpVQvmBk4hCC8MtB8eaK2XDX6ns77UeZBbtoRk</a></p>
+</td></tr><tr><td style=3D"padding:24px 38px;border-top:1px solid #e6ebf3;bac=
+kground:#f9fbfe;text-align:center;color:#8390a6;font-size:12px;line-height:1.=
+6;">=C2=A9 2026 SmartHire =C2=B7 Smarter matching. Stronger teams.<br>This is=
+ an automated security email; please do not reply.</td></tr>
+</table></td></tr></table></body></html>
+
+--===============5801068978531042972==--

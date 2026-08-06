@@ -67,6 +67,8 @@ from app.security import (
 from app.tenancy import create_workspace, ensure_membership, require_permission
 from app.object_storage import avatar_storage, resume_storage
 from app.background_jobs import queue_application_analysis, run_background_job
+from app.saas import enforce_limit, increment_usage
+from app.notification_service import create_notification
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
@@ -388,6 +390,7 @@ def create_job(
 ):
     membership = ensure_membership(db, user)
     require_permission(db, user, "jobs.manage", membership.organization_id)
+    enforce_limit(db, membership.organization_id, "active_jobs")
     job = Job(employer_id=user.id, organization_id=membership.organization_id, **payload.model_dump())
     db.add(job)
     audit(db, user.id, "job.created", "job", job.id)
@@ -448,6 +451,8 @@ async def apply(
     job = db.scalar(select(Job).where(Job.id == job_id, Job.status == JobStatus.OPEN))
     if not job:
         raise HTTPException(404, "Open job not found")
+    if job.organization_id:
+        enforce_limit(db, job.organization_id, "ai_analyses_monthly")
     if db.scalar(
         select(Application).where(Application.job_id == job_id, Application.applicant_id == user.id)
     ):
@@ -478,9 +483,11 @@ async def apply(
     # can validate their foreign keys deterministically during the same transaction.
     db.flush()
     if job.organization_id:
+        increment_usage(db, job.organization_id, "ai_analyses_monthly")
+        increment_usage(db, job.organization_id, "storage_mb", max(1, math.ceil(len(content) / (1024 * 1024))))
         db.add(CandidateTimeline(organization_id=job.organization_id, application_id=application.id, actor_id=user.id, event_type="application_received", description=f"{user.full_name} applied for {job.title}."))
         for membership in db.scalars(select(OrganizationMembership).where(OrganizationMembership.organization_id == job.organization_id, OrganizationMembership.status == "active")).all():
-            db.add(Notification(user_id=membership.user_id, organization_id=job.organization_id, type="new_candidate", title=f"New applicant for {job.title}", message=f"{user.full_name} submitted an application.", action_url=f"/employer/candidates/{application.id}"))
+            create_notification(db, user_id=membership.user_id, organization_id=job.organization_id, type_="new_candidate", title=f"New applicant for {job.title}", message=f"{user.full_name} submitted an application.", action_url=f"/employer/candidates/{application.id}", email_category="new_applications")
     try:
         db.commit()
     except IntegrityError as exc:

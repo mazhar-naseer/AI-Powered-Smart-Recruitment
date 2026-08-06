@@ -15,13 +15,15 @@ from app.models import (
 from app.schemas import (
     CandidateAssignRequest, CandidateMoveRequest, CandidateNoteRequest,
     CandidateTagsRequest, MembershipRoleUpdate, StageCreate, StageUpdate,
-    TeamInviteRequest, UserOut,
+    TeamInviteRequest, UserOut, NotificationPreferencesUpdate,
     WorkspaceSwitchRequest,
 )
 from app.security import current_user, require_roles
 from app.tenancy import ensure_membership, membership_for, permissions_for, require_permission
 from app.email_service import send_team_invitation
 from app.config import get_settings
+from app.saas import enforce_limit
+from app.notification_service import create_notification, preferences_for
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
@@ -35,8 +37,8 @@ def timeline(db: Session, organization_id: str, application_id: str, actor_id: s
     db.add(CandidateTimeline(organization_id=organization_id, application_id=application_id, actor_id=actor_id, event_type=event_type, description=description, metadata_json=metadata or {}))
 
 
-def notify(db: Session, user_id: str, organization_id: str | None, type_: str, title: str, message: str, action_url: str | None = None):
-    db.add(Notification(user_id=user_id, organization_id=organization_id, type=type_, title=title, message=message, action_url=action_url))
+def notify(db: Session, user_id: str, organization_id: str | None, type_: str, title: str, message: str, action_url: str | None = None, email_category: str | None = None):
+    create_notification(db, user_id=user_id, organization_id=organization_id, type_=type_, title=title, message=message, action_url=action_url, email_category=email_category)
 
 
 def application_for_team(db: Session, user: User, application_id: str, permission="candidates.manage") -> tuple[Application, OrganizationMembership]:
@@ -81,6 +83,7 @@ def team(user: User = Depends(require_roles(Role.EMPLOYER)), db: Session = Depen
 def invite_member(payload: TeamInviteRequest, user: User = Depends(require_roles(Role.EMPLOYER)), db: Session = Depends(get_db)):
     membership = ensure_membership(db, user)
     require_permission(db, user, "team.manage", membership.organization_id)
+    enforce_limit(db, membership.organization_id, "team_members")
     email = str(payload.email).lower().strip()
     existing_user = db.scalar(select(User).where(User.email == email))
     if existing_user and existing_user.role != Role.EMPLOYER:
@@ -188,7 +191,8 @@ def move_candidate(application_id: str,payload:CandidateMoveRequest,user:User=De
     application,membership=application_for_team(db,user,application_id);stage=db.get(PipelineStage,payload.stage_id)
     if not stage or stage.organization_id!=membership.organization_id:raise HTTPException(404,"Pipeline stage not found")
     previous=application.stage_id;application.stage_id=stage.id;timeline(db,membership.organization_id,application.id,user.id,"stage_changed",f"{user.full_name} moved the candidate to {stage.name}.",{"previous_stage_id":previous,"stage_id":stage.id})
-    notify(db,application.applicant_id,membership.organization_id,"application_stage",f"Application moved to {stage.name}",f"Your application for {application.job.title} has progressed.","/applicant/applications")
+    category = "interviews_offers" if any(term in f"{stage.name} {stage.category}".lower() for term in ("interview", "offer", "hired")) else "application_status_changes"
+    notify(db,application.applicant_id,membership.organization_id,"application_stage",f"Application moved to {stage.name}",f"Your application for {application.job.title} has progressed.",f"/applicant/applications?application={application.id}",category)
     db.commit();return envelope({"stage_id":stage.id},"Candidate stage updated")
 
 
@@ -199,7 +203,7 @@ def assign_candidate(application_id:str,payload:CandidateAssignRequest,user:User
         assignee=db.scalar(select(OrganizationMembership).where(OrganizationMembership.organization_id==membership.organization_id,OrganizationMembership.user_id==payload.user_id,OrganizationMembership.status=="active"))
         if not assignee:raise HTTPException(422,"Assignee must be an active workspace member")
     application.assigned_to_id=payload.user_id;timeline(db,membership.organization_id,application.id,user.id,"assignment_changed",f"{user.full_name} updated candidate ownership.",{"assigned_to_id":payload.user_id})
-    if payload.user_id:notify(db,payload.user_id,membership.organization_id,"candidate_assigned","Candidate assigned to you",f"You are now responsible for {application.applicant.full_name}.",f"/employer/candidates/{application.id}")
+    if payload.user_id:notify(db,payload.user_id,membership.organization_id,"candidate_assigned","Candidate assigned to you",f"You are now responsible for {application.applicant.full_name}.",f"/employer/candidates/{application.id}","assignments")
     db.commit();return envelope({"assigned_to_id":payload.user_id},"Candidate assignment updated")
 
 
@@ -227,6 +231,20 @@ def notifications(unread_only:bool=False,user:User=Depends(current_user),db:Sess
     if unread_only:stmt=stmt.where(Notification.read_at.is_(None))
     items=db.scalars(stmt.order_by(Notification.created_at.desc()).limit(100)).all();unread=db.scalar(select(func.count(Notification.id)).where(Notification.user_id==user.id,Notification.read_at.is_(None))) or 0
     return envelope({"unread_count":unread,"items":[{"id":n.id,"type":n.type,"title":n.title,"message":n.message,"action_url":n.action_url,"read_at":n.read_at.isoformat() if n.read_at else None,"created_at":n.created_at.isoformat()} for n in items]})
+
+
+@router.get("/notifications/preferences")
+def notification_preferences(user: User = Depends(current_user)):
+    return envelope(preferences_for(user))
+
+
+@router.patch("/notifications/preferences")
+def update_notification_preferences(payload: NotificationPreferencesUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    values = preferences_for(user)
+    values.update(payload.model_dump(exclude_none=True))
+    user.notification_preferences = values
+    db.commit()
+    return envelope(values, "Email notification preferences updated")
 
 
 @router.patch("/notifications/{notification_id}/read")
@@ -267,6 +285,13 @@ def admin_background_jobs(status: str | None = Query(default=None), user: User =
             raise HTTPException(422, "Unsupported background job status")
         statement = statement.where(BackgroundJob.status == status)
     jobs = db.scalars(statement).all()
+    application_ids = [item.payload.get("application_id") for item in jobs if item.job_type == "application_analysis" and item.payload.get("application_id")]
+    applications = db.scalars(
+        select(Application)
+        .options(joinedload(Application.applicant), joinedload(Application.job).joinedload(Job.organization))
+        .where(Application.id.in_(application_ids))
+    ).unique().all() if application_ids else []
+    application_map = {item.id: item for item in applications}
     return envelope([{
         "id": item.id,
         "organization_id": item.organization_id,
@@ -278,6 +303,18 @@ def admin_background_jobs(status: str | None = Query(default=None), user: User =
         "last_error": item.last_error,
         "created_at": item.created_at.isoformat(),
         "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+        "application": ({
+            "id": application.id,
+            "candidate_name": application.applicant.full_name,
+            "candidate_email": application.applicant.email,
+            "job_id": application.job_id,
+            "job_title": application.job.title,
+            "organization_name": application.job.organization.name if application.job.organization else (application.job.employer.company_name or application.job.employer.full_name),
+            "application_status": application.status.value,
+            "final_score": application.final_score,
+            "ai_provider": application.ai_provider,
+            "ai_status": application.ai_status,
+        } if (application := application_map.get(item.payload.get("application_id"))) else None),
     } for item in jobs])
 
 

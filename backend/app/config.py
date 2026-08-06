@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     gemini_weight: float = 0.35
     hybrid_disagreement_threshold: float = 25.0
     gemini_timeout_seconds: int = 30
+    billing_provider: str = "manual"
+    billing_webhook_secret: str | None = None
+    trial_days: int = 14
+    google_oauth_enabled: bool = False
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://127.0.0.1:8000/api/v1/auth/oauth/google/callback"
 
     @field_validator("gemini_weight")
     @classmethod
