@@ -55,7 +55,11 @@ from app.schemas import (
     UserStatusUpdate,
     VerifyEmailRequest,
 )
-from app.email_service import consume_verification, issue_email_verification
+from app.email_service import (
+    consume_verification,
+    email_provider_configured,
+    issue_email_verification,
+)
 from app.security import (
     create_token,
     current_user,
@@ -146,20 +150,32 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
         role=payload.role,
         company_name=payload.company_name,
-        email_verified=False,
+        email_verified=not settings.email_verification_enabled,
     )
     db.add(user)
     db.flush()
     if user.role == Role.EMPLOYER:
         create_workspace(db, user, payload.company_name)
-    _, dev_code = issue_email_verification(db, user)
+    # With verification off no code is issued at all, so there is nothing to
+    # send and nothing to consume: the account is active and login is the next
+    # step. Keep the response keys stable so clients need no branching.
+    if not settings.email_verification_enabled:
+        audit(db, user.id, "auth.register", "user", user.id)
+        db.commit()
+        db.refresh(user)
+        data = UserOut.model_validate(user).model_dump(mode="json")
+        data["verification_required"] = False
+        data["verification_email_sent"] = False
+        return envelope(data, "Account created. You can log in now.")
+
+    _, dev_code, delivered = issue_email_verification(db, user)
     audit(db, user.id, "auth.register", "user", user.id)
     db.commit()
     db.refresh(user)
     data = UserOut.model_validate(user).model_dump(mode="json")
     data["verification_required"] = True
     data["verification_email_sent"] = delivered
-    if settings.environment == "development" and not settings.smtp_host:
+    if settings.environment == "development" and not email_provider_configured():
         data["dev_verification_code"] = dev_code
     return envelope(
         data,
@@ -184,12 +200,14 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 @router.post("/auth/resend-verification")
 def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
+    if not settings.email_verification_enabled:
+        raise HTTPException(400, "Email verification is disabled. Log in with your password.")
     user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
     dev_code = None
     if user and not user.email_verified:
         _, dev_code, _ = issue_email_verification(db, user)
         db.commit()
-    data = {"dev_verification_code": dev_code} if settings.environment == "development" and not settings.smtp_host and dev_code else None
+    data = {"dev_verification_code": dev_code} if settings.environment == "development" and not email_provider_configured() and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")
 
 
@@ -213,7 +231,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(401, "Invalid email or password")
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(403, "Account is not active")
-    if not user.email_verified:
+    # Accounts that registered while verification was on would otherwise be
+    # stranded once it is turned off: no code can be issued to clear the flag.
+    if settings.email_verification_enabled and not user.email_verified:
         raise HTTPException(403, "Email verification required")
     user.last_login_at = datetime.now(UTC)
     auth = issue_tokens(user, db)
@@ -651,13 +671,13 @@ def download_resume(
     if not app or app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     try:
-        content = read_resume(app.resume.storage_key, settings)
-    except StorageError as exc:
+        resume_path = resume_storage.path(app.resume.storage_key)
+    except FileNotFoundError as exc:
         raise HTTPException(404, "Resume file not found") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
     return FileResponse(
-        resume_storage.path(app.resume.storage_key), media_type=app.resume.mime_type, filename=app.resume.original_filename
+        resume_path, media_type=app.resume.mime_type, filename=app.resume.original_filename
     )
 
 
@@ -963,12 +983,12 @@ def admin_download_resume(
         raise HTTPException(404, "Application not found")
     try:
         resume_path = resume_storage.path(application.resume.storage_key)
-    except FileNotFoundError:
-        raise HTTPException(404, "Resume file not found")
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Resume file not found") from exc
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
     return Response(
-        content,
+        resume_path.read_bytes(),
         media_type=application.resume.mime_type,
         headers={
             "Content-Disposition": (

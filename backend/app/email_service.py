@@ -19,20 +19,6 @@ settings = get_settings()
 logger = logging.getLogger("email")
 
 
-def _deliver(message: EmailMessage, filename: str) -> None:
-    if settings.smtp_host:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
-            if settings.smtp_use_tls:
-                smtp.starttls()
-            if settings.smtp_username:
-                smtp.login(settings.smtp_username, settings.smtp_password or "")
-            smtp.send_message(message)
-    else:
-        outbox = Path(".outbox")
-        outbox.mkdir(exist_ok=True)
-        (outbox / filename).write_text(message.as_string(), encoding="utf-8")
-
-
 def send_notification_email(user: User, title: str, body: str, action_url: str | None) -> None:
     link = f"{settings.frontend_url}{action_url}" if action_url and action_url.startswith("/") else (action_url or settings.frontend_url)
     message = EmailMessage()
@@ -91,6 +77,15 @@ def build_verification_message(user: User, code: str, link: str) -> EmailMessage
     return message
 
 
+def email_provider_configured() -> bool:
+    """Whether a real transport exists, as opposed to the .outbox fallback.
+
+    Callers use this to decide whether returning a code in the API response is
+    still the only way a developer can reach it.
+    """
+    return bool(settings.brevo_api_key or settings.smtp_host)
+
+
 def _send_over_brevo(message: EmailMessage) -> None:
     """Hand the message to Brevo's HTTPS transactional endpoint.
 
@@ -132,12 +127,12 @@ def _send_over_smtp(message: EmailMessage) -> None:
         smtp.send_message(message)
 
 
-def _deliver(message: EmailMessage, user: User) -> bool:
+def _deliver(message: EmailMessage, filename: str) -> bool:
     """Send the message, returning whether it actually left the process.
 
-    Never raises. Delivery is a side effect of registration, not part of it: a
-    refused login, a blocked port, or a provider timeout must not undo an
-    otherwise valid signup. The caller decides how to tell the user.
+    Never raises. Delivery is a side effect of the action that triggered it, not
+    part of it: a refused login, a blocked port, or a provider timeout must not
+    undo an otherwise valid signup. The caller decides how to tell the user.
     """
     # Brevo wins when both are set. SMTP is unreachable on the hosts that make
     # an HTTPS provider necessary, so trying it first would only add a timeout.
@@ -146,9 +141,9 @@ def _deliver(message: EmailMessage, user: User) -> bool:
         try:
             transport(message)
         except Exception:
-            # Recipient only, never the code or token — this log is not a safe
+            # Recipient only, never a code or token — this log is not a safe
             # place for a credential that grants account access.
-            logger.exception("Verification email to %s could not be sent", user.email)
+            logger.exception("Email to %s could not be sent", message["To"])
             return False
         return True
 
@@ -158,7 +153,7 @@ def _deliver(message: EmailMessage, user: User) -> bool:
     try:
         outbox = Path(".outbox")
         outbox.mkdir(exist_ok=True)
-        (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
+        (outbox / filename).write_text(message.as_string(), encoding="utf-8")
     except OSError:
         logger.warning("No email provider is configured and .outbox is not writable")
     return False
@@ -177,7 +172,7 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
     ))
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
-    return token, code, _deliver(message, user)
+    return token, code, _deliver(message, f"{user.id}.txt")
 
 
 def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:

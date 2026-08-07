@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     log_level: str = "INFO"
     frontend_url: str = "http://localhost:5173"
+    # Off skips the OTP email entirely: registration activates the account and
+    # the caller is sent to login. Useful where no provider is reachable, and
+    # it also unblocks accounts that registered while verification was on.
+    email_verification_enabled: bool = True
     # Brevo delivers over HTTPS. Prefer it on hosts that block outbound SMTP:
     # Railway blocks ports 25/465/587/2525 below the Pro plan, where smtplib
     # fails with "Network is unreachable" no matter how SMTP_* is configured.

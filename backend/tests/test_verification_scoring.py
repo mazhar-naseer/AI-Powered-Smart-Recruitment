@@ -26,6 +26,41 @@ def test_unverified_user_cannot_login_and_code_verifies(client):
     assert replay.status_code == 400
 
 
+def test_disabled_verification_activates_account_and_allows_immediate_login(client, monkeypatch):
+    monkeypatch.setattr("app.api.settings.email_verification_enabled", False)
+    created = client.post("/api/v1/auth/register", json={
+        "full_name": "Direct", "email": "direct@example.com",
+        "password": "Password123!", "role": "applicant",
+    })
+    assert created.status_code == 201, created.text
+    data = created.json()["data"]
+    assert data["verification_required"] is False
+    assert data["email_verified"] is True
+    # No code is issued, so nothing may leak one to the client either.
+    assert "dev_verification_code" not in data
+    allowed = client.post("/api/v1/auth/login", json={
+        "email": "direct@example.com", "password": "Password123!",
+    })
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["data"]["access_token"]
+    resend = client.post("/api/v1/auth/resend-verification", json={"email": "direct@example.com"})
+    assert resend.status_code == 400
+
+
+def test_account_registered_before_verification_was_disabled_can_still_log_in(client, monkeypatch):
+    created = client.post("/api/v1/auth/register", json={
+        "full_name": "Stranded", "email": "stranded@example.com",
+        "password": "Password123!", "role": "applicant",
+    })
+    assert created.status_code == 201
+    assert created.json()["data"]["verification_required"] is True
+    monkeypatch.setattr("app.api.settings.email_verification_enabled", False)
+    allowed = client.post("/api/v1/auth/login", json={
+        "email": "stranded@example.com", "password": "Password123!",
+    })
+    assert allowed.status_code == 200, allowed.text
+
+
 def test_hybrid_score_is_explainable_and_rewards_evidence():
     score, matched, parts = detailed_score(
         "Senior Python FastAPI engineer with 6 years experience building PostgreSQL APIs",
