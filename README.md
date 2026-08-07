@@ -106,6 +106,23 @@ The ATS includes:
 
 Primary employer screens are `/employer/team`, `/employer/pipeline`, `/employer/pipeline/settings`, `/employer/candidates/:id`, and `/notifications`. Platform monitoring is available at `/admin/operations`.
 
+## Commercial SaaS layer
+
+Every company workspace has an independent subscription, plan entitlement set, monthly usage ledger, branding/privacy configuration, and audited data export. Employer owners access this at `/employer/settings`; platform administrators monitor all tenant accounts at `/admin/saas` in the separate Control Center.
+
+Included commercial capabilities:
+
+- Starter, Growth, and Scale plan catalog with server-enforced active-job, team-member, AI-analysis, and storage entitlements
+- Trial and active subscription lifecycle stored per organization
+- Tenant usage meters that cannot be bypassed by hiding frontend controls
+- Owner-only company identity, timezone, careers URL, brand color, notification, and retention settings
+- Tenant-scoped JSON data portability export with an immutable audit record
+- Provider-neutral billing webhook with HMAC verification and event idempotency
+- Manual billing mode for complete local testing without charging a card
+- Platform-wide tenant count, active subscriptions, plan distribution, and estimated MRR
+
+Local development uses `BILLING_PROVIDER=manual`; selecting a plan changes the tenant subscription immediately so every entitlement can be tested. Before accepting real payments, connect the checkout/customer-portal calls to a provider such as Stripe and set a strong `BILLING_WEBHOOK_SECRET`. The backend webhook contract and provider identifiers are already isolated from the ATS and AI domains.
+
 ## Explainable hybrid matching
 
 Every valid resume is evaluated by two independent engines.
@@ -239,7 +256,28 @@ SMTP_USE_TLS=true
 
 Without SMTP configuration, development emails are saved to `.outbox/`, and a development verification code is returned to the local UI.
 
+Commercial SaaS configuration:
+
+```env
+BILLING_PROVIDER=manual
+BILLING_WEBHOOK_SECRET=
+TRIAL_DAYS=14
+```
+
+`manual` mode is intended for local validation and internal invoicing. A real payment provider must supply checkout and customer-portal integration before public card billing is enabled.
+
 Never commit `.env`, SMTP credentials, JWT secrets, database passwords, or Gemini API keys.
+
+Google login configuration:
+
+```env
+GOOGLE_OAUTH_ENABLED=true
+GOOGLE_CLIENT_ID=your-google-web-client-id
+GOOGLE_CLIENT_SECRET=your-google-web-client-secret
+GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/api/v1/auth/oauth/google/callback
+```
+
+The Google Cloud OAuth client redirect URI must match this value exactly. New users select Applicant or Employer on the registration page before continuing with Google; the login-page button signs in existing linked or email-matched accounts only.
 
 ## Local installation
 
@@ -375,6 +413,7 @@ Register → verify email → automatic login → browse jobs → upload PDF or 
 Register → verify email → automatic login → publish job
 → configure AI Scorecard Studio → review ranked applicants → inspect evidence
 → optionally re-analyze or record an audited human override → securely view/download resume
+→ manage workspace plan, quota usage, brand/privacy settings, and tenant export
 ```
 
 ### Administrator
@@ -411,6 +450,7 @@ npm run e2e
 ```
 
 Additional test scenarios and manual QA instructions are documented in [docs/TESTING.md](docs/TESTING.md).
+The completed commercial phase report is available in [docs/COMMERCIAL_SAAS_TEST_REPORT.md](docs/COMMERCIAL_SAAS_TEST_REPORT.md).
 
 ## API and processing behavior
 

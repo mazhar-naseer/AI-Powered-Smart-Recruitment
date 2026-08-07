@@ -8,6 +8,7 @@ export function JobDetails(){
   const[file,setFile]=useState<File>();
   const[error,setError]=useState('');
   const[busy,setBusy]=useState(false);
+  const[justSubmitted,setJustSubmitted]=useState(false);
   useEffect(()=>{
     Promise.all([request<Job>(`/jobs/${id}`),request<Application[]>('/applicant/applications')])
       .then(([jobData,applications])=>{setJob(jobData);setExisting(applications.find(application=>application.job_id===id)||null)})
@@ -20,6 +21,7 @@ export function JobDetails(){
     const form=new FormData();form.append('resume',file);setBusy(true);setError('');
     try{
       const submitted=await request<{id:string;status:string}>(`/jobs/${id}/applications`,{method:'POST',body:form});
+      setJustSubmitted(true);
       setExisting({id:submitted.id,status:submitted.status,job_id:id,matched_skills:[],component_scores:{},ai_strengths:[],ai_gaps:[],created_at:new Date().toISOString()} as Application)
     }catch(err){
       const message=err instanceof Error?err.message:'Application failed';setError(message);
@@ -30,7 +32,7 @@ export function JobDetails(){
     }finally{setBusy(false)}
   }
   if(!job||existing===undefined)return <Spinner/>;
-  return <><div className="job-detail-head"><div className="job-icon"><BriefcaseBusiness/></div><div><h1>{job.title}</h1><p>{job.employer.company_name||job.employer.full_name}</p><span><MapPin size={14}/>{job.location||'Remote / flexible'} · {job.employment_type||'Full-time'}</span></div></div><div className="job-detail-grid"><section className="panel prose"><h2>Job Description</h2><p>{job.description}</p><h3>Required Skills</h3><div className="chips">{job.required_skills.map(s=><Badge key={s} tone="blue">{s}</Badge>)}</div><div className="job-facts"><div><span>Experience</span><strong>{job.experience_level||'Not specified'}</strong></div><div><span>Job Type</span><strong>{job.employment_type||'Full-time'}</strong></div><div><span>Salary</span><strong>{job.salary_min?`${job.salary_min} - ${job.salary_max||'Open'}`:'Not disclosed'}</strong></div></div></section>{existing?<section className="panel applied-card"><div className="applied-check"><CheckCircle2/></div><Badge tone={existing.status==='completed'?'green':'orange'}>{existing.status}</Badge><h2>Application already submitted</h2><p>You applied on {new Date(existing.created_at).toLocaleDateString()}. Your resume is already attached to this application.</p>{existing.final_score!=null&&<div className="applied-score"><span>Current match score</span><strong>{existing.final_score}%</strong></div>}<Link className="button full" to="/applicant/applications">View my application</Link></section>:<form className="panel upload" onSubmit={apply}><h2>Apply for this job</h2><p>Upload Resume (PDF or DOCX)</p>{error&&<div className="alert error">{error}</div>}<label className="dropzone"><UploadCloud/><strong>Choose your PDF or DOCX resume</strong><small>Maximum file size: 5 MB</small><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={e=>setFile(e.target.files?.[0])}/>{file&&<b>{file.name}</b>}</label><button className="button full" disabled={busy}>{busy?'Submitting…':'Submit Application'}</button></form>}</div></>
+  return <><div className="job-detail-head"><div className="job-icon"><BriefcaseBusiness/></div><div><h1>{job.title}</h1><p>{job.employer.company_name||job.employer.full_name}</p><span><MapPin size={14}/>{job.location||'Remote / flexible'} · {job.employment_type||'Full-time'}</span></div></div><div className="job-detail-grid"><section className="panel prose"><h2>Job Description</h2><p>{job.description}</p><h3>Required Skills</h3><div className="chips">{job.required_skills.map(s=><Badge key={s} tone="blue">{s}</Badge>)}</div><div className="job-facts"><div><span>Experience</span><strong>{job.experience_level||'Not specified'}</strong></div><div><span>Job Type</span><strong>{job.employment_type||'Full-time'}</strong></div><div><span>Salary</span><strong>{job.salary_min?`${job.salary_min} - ${job.salary_max||'Open'}`:'Not disclosed'}</strong></div></div></section>{existing?<section className={`panel applied-card ${justSubmitted?'new-submission':''}`}><div className="applied-check"><CheckCircle2/></div><Badge tone={existing.status==='completed'?'green':'orange'}>{existing.status}</Badge><h2>{justSubmitted?'Application submitted successfully':'Application already submitted'}</h2><p>{justSubmitted?`We received your resume for ${job.title}. SmartHire is now processing your match analysis.`:`You applied on ${new Date(existing.created_at).toLocaleDateString()}. Your resume is already attached to this specific job application.`}</p>{existing.final_score!=null&&<div className="applied-score"><span>Current match score</span><strong>{existing.final_score}%</strong></div>}<Link className="button full" to={`/applicant/applications?application=${existing.id}`}>Track this application</Link></section>:<form className="panel upload" onSubmit={apply}><h2>Apply for this job</h2><p>Upload Resume (PDF or DOCX)</p>{error&&<div className="alert error">{error}</div>}<label className="dropzone"><UploadCloud/><strong>Choose your PDF or DOCX resume</strong><small>Maximum file size: 5 MB</small><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={e=>setFile(e.target.files?.[0])}/>{file&&<b>{file.name}</b>}</label><button className="button full" disabled={busy}>{busy?'Submitting…':'Submit Application'}</button></form>}</div></>
 }
 
 const KPI=[
@@ -64,17 +66,22 @@ function InsightReport({application,onRetryAI,retryingAI}:{application:Applicati
 }
 
 export function ApplicantApplications(){
+  const targetApplication=new URLSearchParams(location.search).get('application')||undefined;
   const[apps,setApps]=useState<Application[]>();
   const[retrying,setRetrying]=useState<string>();
   const[retryingAI,setRetryingAI]=useState<string>();
-  const[expanded,setExpanded]=useState<string>();
-  const load=()=>request<Application[]>('/applicant/applications').then(setApps);
+  const[expanded,setExpanded]=useState<string|undefined>(targetApplication);
+  const load=()=>request<Application[]>('/applicant/applications').then(items=>setApps(targetApplication?[...items].sort((a,b)=>a.id===targetApplication?-1:b.id===targetApplication?1:0):items));
   useEffect(()=>{void load()},[]);
   useEffect(()=>{
     if(!apps?.some(application=>application.status==='processing'||application.ai_status==='processing'))return;
     const timer=window.setInterval(()=>{void load()},2500);
     return()=>window.clearInterval(timer)
   },[apps]);
+  useEffect(()=>{
+    if(!apps||!targetApplication)return;
+    document.querySelector('.applications-panel .insight-row')?.scrollIntoView({behavior:'smooth',block:'center'});
+  },[apps,targetApplication]);
   async function retry(id:string){
     setRetrying(id);
     try{await request(`/applicant/applications/${id}/retry`,{method:'POST'});await load()}
