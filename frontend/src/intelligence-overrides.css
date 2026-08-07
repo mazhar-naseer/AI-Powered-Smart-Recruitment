@@ -1,0 +1,13 @@
+.override-form {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #dce4ef;
+  border-radius: 9px;
+  background: #f8faff;
+  display: grid;
+  gap: 12px;
+}
+.override-form h3 { margin: 0; }
+.override-form label { display: grid; gap: 6px; font-size: 11px; font-weight: 700; }
+.override-form input,
+.override-form textarea { border: 1px solid var(--border); border-radius: 7px; padding: 10px; background: #fff; }

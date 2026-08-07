@@ -9,6 +9,7 @@ SmartHire is a production-oriented, AI-assisted recruitment platform built with 
 ### Applicant experience
 
 - Email-verified account registration and automatic login after verification
+- Comprehensive professional profile with private photo, biography, contact details, links, skills, education, languages, experience, availability, notice period, and work-mode preferences
 - Searchable job board and detailed job views
 - Private PDF resume upload with duplicate-application prevention
 - Real-time processing status and retryable analysis failures
@@ -19,10 +20,16 @@ SmartHire is a production-oriented, AI-assisted recruitment platform built with 
 ### Employer experience
 
 - Email-verified employer registration
+- Branded employer profile with private photo, company overview, industry, size, founding year, website, hiring interests, workplace languages, and professional links
 - Dashboard and job lifecycle management
 - Field-level job-form validation with actionable messages
 - Ranked applicant lists and secure resume downloads
 - Candidate match scores, evidence, strengths, and gaps
+- Multi-company workspaces with an explicit active-workspace switcher
+- Recruiter invitations and owner/admin/recruiter/viewer permissions
+- Configurable hiring pipeline with protected default stages and custom stages
+- Candidate assignments, tags, internal notes, and an immutable activity timeline
+- Account notification center for invitations, assignments, new applicants, and stage progress
 
 ### Admin Control Center
 
@@ -33,7 +40,7 @@ SmartHire is a production-oriented, AI-assisted recruitment platform built with 
 - User suspension and activation
 - Job-content moderation
 - Server-enforced admin RBAC for every administrative endpoint
-- No public admin registration; administrators are provisioned through a local script
+- No public admin registration; the first administrator is provisioned locally, then authenticated administrators can securely create additional admins from Identity & Access
 
 ## Technology stack
 
@@ -66,28 +73,67 @@ FastAPI REST API
 ├── Deterministic scoring
 ├── Gemini enrichment and guardrails
 ├── Email verification
-└── Audit logging
+├── Multi-tenant workspace and ATS services
+├── Durable background-job processing
+├── Private object-storage abstraction
+├── Notifications
+└── Audit and operations monitoring
           │
           ▼
 PostgreSQL + private resume storage
 ```
 
+## Market-ready ATS foundation
+
+Each employer belongs to one or more isolated company workspaces. Jobs, candidates, pipeline stages, recruiter memberships, notifications, audit context, and background jobs carry an organization identifier; API permission checks verify the active membership instead of trusting a client-provided company ID.
+
+| Workspace role | Organization/team | Jobs | Candidates | Notes | Analytics |
+|---|---:|---:|---:|---:|---:|
+| Owner | Manage | Manage | Manage | Add | View |
+| Admin | Team | Manage | Manage | Add | View |
+| Recruiter | — | Manage | Manage | Add | View |
+| Viewer | — | — | Read | — | View |
+
+The ATS includes:
+
+- Secure seven-day recruiter email invitations, acceptance, revocation, role changes, and member removal
+- Per-company stages with Applied, Screening, Interview, Offer, Hired, and Rejected defaults
+- Owner-controlled custom stages, ordering, naming, and colors
+- Candidate board, filtering, assignment, tags, notes, and chronological events
+- Private resume keys that never expose host filesystem paths
+- Database-backed analysis jobs with retry limits, scheduling, failure details, and administrator retry APIs
+- Employer and admin operational views backed by audit and queue metrics
+
+Primary employer screens are `/employer/team`, `/employer/pipeline`, `/employer/pipeline/settings`, `/employer/candidates/:id`, and `/notifications`. Platform monitoring is available at `/admin/operations`.
+
+## Commercial SaaS layer
+
+Every company workspace has an independent subscription, plan entitlement set, monthly usage ledger, branding/privacy configuration, and audited data export. Employer owners access this at `/employer/settings`; platform administrators monitor all tenant accounts at `/admin/saas` in the separate Control Center.
+
+Included commercial capabilities:
+
+- Starter, Growth, and Scale plan catalog with server-enforced active-job, team-member, AI-analysis, and storage entitlements
+- Trial and active subscription lifecycle stored per organization
+- Tenant usage meters that cannot be bypassed by hiding frontend controls
+- Owner-only company identity, timezone, careers URL, brand color, notification, and retention settings
+- Tenant-scoped JSON data portability export with an immutable audit record
+- Provider-neutral billing webhook with HMAC verification and event idempotency
+- Manual billing mode for complete local testing without charging a card
+- Platform-wide tenant count, active subscriptions, plan distribution, and estimated MRR
+
+Local development uses `BILLING_PROVIDER=manual`; selecting a plan changes the tenant subscription immediately so every entitlement can be tested. Before accepting real payments, connect the checkout/customer-portal calls to a provider such as Stripe and set a strong `BILLING_WEBHOOK_SECRET`. The backend webhook contract and provider identifiers are already isolated from the ATS and AI domains.
+
 ## Explainable hybrid matching
 
 Every valid resume is evaluated by two independent engines.
 
-### 1. Deterministic Python engine
+### 1. Advanced deterministic Python engine
 
 The deterministic score is fully reproducible and always runs, even when Gemini is unavailable.
 
-```text
-Semantic relevance (TF-IDF + cosine similarity)   50%
-Required-skill coverage                           30%
-Job-title/role alignment                          10%
-Experience evidence                               10%
-```
+The employer configures a per-job scorecard that must total 100%. Defaults are semantic relevance 15%, skill evidence 35%, experience 25%, role alignment 15%, domain knowledge 5%, and education/certifications 5%. The semantic component combines word and character n-gram vectors. Skill detection uses a normalized ontology, so aliases such as `Postgres`/`PostgreSQL` and `JS`/`JavaScript` are evaluated consistently.
 
-Matching every skill does not automatically produce a 100% score because required skills contribute 30% of the deterministic result; full-document relevance, role alignment, and experience contribute the remaining 70%.
+Skills can be mandatory, preferred, or optional. Missing a mandatory skill caps the deterministic result at 55%. Each criterion stores matched status, priority, criterion score, and supporting resume snippets in an evidence matrix.
 
 ### 2. Gemini assessment
 
@@ -119,6 +165,16 @@ Default guardrails:
 - Both scores, effective weights, confidence, and provider are stored
 - A difference of 25 points or more sets `manual_review_required`
 - No score automatically hires or rejects a person
+
+### 4. Advanced intelligence operations
+
+- Applicant uploads accept text PDF and DOCX; image-only PDFs use an optional OCR fallback when Tesseract is installed
+- Every result stores parser, analysis, and Gemini prompt versions plus a snapshot of the job scorecard
+- Employers configure weights, priorities, domains, education, and certifications in **AI Scorecard Studio**
+- Employers can re-analyze historical applications after changing a scorecard
+- Employer/admin score overrides require a written reason and create immutable override-history records
+- The Admin **Intelligence Monitor** reports score distribution, Gemini completion, engine disagreement, manual-review volume, and override rate
+- Protected characteristics are intentionally excluded from scoring and monitoring
 
 ## Repository structure
 
@@ -200,7 +256,28 @@ SMTP_USE_TLS=true
 
 Without SMTP configuration, development emails are saved to `.outbox/`, and a development verification code is returned to the local UI.
 
+Commercial SaaS configuration:
+
+```env
+BILLING_PROVIDER=manual
+BILLING_WEBHOOK_SECRET=
+TRIAL_DAYS=14
+```
+
+`manual` mode is intended for local validation and internal invoicing. A real payment provider must supply checkout and customer-portal integration before public card billing is enabled.
+
 Never commit `.env`, SMTP credentials, JWT secrets, database passwords, or Gemini API keys.
+
+Google login configuration:
+
+```env
+GOOGLE_OAUTH_ENABLED=true
+GOOGLE_CLIENT_ID=your-google-web-client-id
+GOOGLE_CLIENT_SECRET=your-google-web-client-secret
+GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/api/v1/auth/oauth/google/callback
+```
+
+The Google Cloud OAuth client redirect URI must match this value exactly. New users select Applicant or Employer on the registration page before continuing with Google; the login-page button signs in existing linked or email-matched accounts only.
 
 ## Local installation
 
@@ -238,7 +315,7 @@ cd backend
 
 ### 4. Create an administrator
 
-Public registration intentionally supports only applicants and employers.
+Public registration intentionally supports only applicants and employers. Use the script once to bootstrap the first administrator.
 
 ```bash
 ../.venv/bin/python scripts/create_admin.py \
@@ -248,6 +325,8 @@ Public registration intentionally supports only applicants and employers.
 ```
 
 The account is created as active and email-verified in PostgreSQL.
+
+After signing in to the Admin Control Center, additional administrators can be created from **Identity & Access → Create Administrator**. This action requires an existing admin JWT, enforces a strong password, and writes an audit event.
 
 ### 5. Start the backend
 
@@ -283,12 +362,48 @@ Frontend URLs:
 
 If Vite reports that `5173` is occupied, use the alternate port printed in the terminal.
 
+## One-click FastAPI debugging in PyCharm
+
+The repository includes a shared run configuration at `.run/SmartHire_Backend_Debug.run.xml`.
+
+1. Open the `SmartHire` repository root in PyCharm.
+2. Set the project interpreter to `SmartHire/.venv/bin/python`.
+3. Select **SmartHire Backend Debug** in the top run-configuration selector.
+4. Add a breakpoint inside `backend/app/api.py` or another backend module.
+5. Click the **Debug** button.
+
+The configuration runs the equivalent of:
+
+```bash
+cd backend
+../.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+The working directory is intentionally `backend/`, allowing Pydantic Settings to load the root `.env` through the configured `../.env` path. Debug mode intentionally omits Uvicorn `--reload`: reload starts a child process and can make breakpoints inconsistent. Restart the debugger after backend code changes.
+
+### Run background processing locally
+
+Development defaults to inline processing for convenient debugging. To test the production-style durable worker, set `INLINE_BACKGROUND_JOBS=false`, keep the API running, then start this in another terminal:
+
+```bash
+cd backend
+../.venv/bin/python scripts/run_worker.py
+```
+
+Applications remain queued in PostgreSQL until a worker claims them. Failed jobs retry with backoff up to the configured maximum; administrators can inspect and requeue terminal jobs from Operations.
+
+If port `8000` is already occupied, stop the terminal-launched backend before starting the debugger:
+
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
 ## Role workflows
 
 ### Applicant
 
 ```text
-Register → verify email → automatic login → browse jobs → upload PDF
+Register → verify email → automatic login → browse jobs → upload PDF or DOCX
 → deterministic analysis → Gemini analysis → inspect explainable result
 ```
 
@@ -296,14 +411,16 @@ Register → verify email → automatic login → browse jobs → upload PDF
 
 ```text
 Register → verify email → automatic login → publish job
-→ review ranked applicants → inspect evidence → securely download resume
+→ configure AI Scorecard Studio → review ranked applicants → inspect evidence
+→ optionally re-analyze or record an audited human override → securely view/download resume
+→ manage workspace plan, quota usage, brand/privacy settings, and tenant export
 ```
 
 ### Administrator
 
 ```text
-Provision through script → open /admin/login → authenticate
-→ enter separate Control Center → manage users/jobs and monitor the platform
+Provision through Control Center or script → open /admin/login → authenticate
+→ manage users/jobs → inspect evidence/resumes → monitor intelligence quality
 ```
 
 ## Testing and verification
@@ -333,6 +450,7 @@ npm run e2e
 ```
 
 Additional test scenarios and manual QA instructions are documented in [docs/TESTING.md](docs/TESTING.md).
+The completed commercial phase report is available in [docs/COMMERCIAL_SAAS_TEST_REPORT.md](docs/COMMERCIAL_SAAS_TEST_REPORT.md).
 
 ## API and processing behavior
 
@@ -341,9 +459,9 @@ Additional test scenarios and manual QA instructions are documented in [docs/TES
 - Unverified users cannot log in
 - Verification codes and links expire and cannot be replayed
 - One applicant can apply to each job only once
-- Only PDF resumes within the configured size limit are accepted
+- PDF and DOCX resumes within the configured size limit are accepted
 - Private resumes are downloadable only by the employer who owns the associated job
-- Scanned PDFs without extractable text return a clear retryable error
+- Scanned PDFs use OCR when its optional system dependency is available; otherwise they return a clear retryable error
 - Gemini failure never converts a successfully parsed resume into a failed application
 - Existing deterministic-only records can use the “Retry Gemini analysis” action
 - Administrative actions and important authentication events are audited
@@ -366,7 +484,7 @@ Open:
 - Application: `http://localhost:8080`
 - Admin Control Center: `http://localhost:8080/admin/login`
 
-The backend waits for PostgreSQL, applies Alembic migrations, and starts Uvicorn workers. PostgreSQL data and uploaded resumes are stored in named Docker volumes.
+The backend waits for PostgreSQL, applies Alembic migrations, and starts Uvicorn. The separate `worker` service claims durable analysis jobs. PostgreSQL data, resumes, and avatars are stored in named Docker volumes.
 
 ## Cloud deployment
 
@@ -380,7 +498,7 @@ Set `USE_CLOUDINARY=true` on any host with an ephemeral filesystem. Uploads writ
 - Prefer separate hosts such as `app.example.com`, `admin.example.com`, and `api.example.com`
 - Restrict the admin host with SSO, MFA, VPN, or an identity-aware proxy
 - Use a managed secret store instead of plaintext environment files
-- Move resume processing to a durable worker queue before horizontal scaling
+- Replace the included database-backed worker with a dedicated broker such as Redis/SQS when sustained throughput requires horizontal worker scaling
 - Encrypt resume storage and database backups
 - Define resume retention and deletion policies
 - Add malware scanning for uploaded files

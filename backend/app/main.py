@@ -10,6 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import router
+from app.ats_api import router as ats_router
+from app.saas_api import router as saas_router
+from app.oauth_api import router as oauth_router
+from app.governance_api import router as governance_router
 from app.config import get_settings
 from app.database import Base, engine
 
@@ -88,3 +92,7 @@ def ready():
 
 
 app.include_router(router)
+app.include_router(ats_router)
+app.include_router(saas_router)
+app.include_router(oauth_router)
+app.include_router(governance_router)

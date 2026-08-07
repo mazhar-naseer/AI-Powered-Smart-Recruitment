@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     database_pool_timeout: int = 30
     resume_storage_path: Path = Path("../storage/resumes")
     avatar_storage_path: Path = Path("../storage/avatars")
+    object_storage_backend: str = "local"
+    inline_background_jobs: bool = True
     max_resume_size_mb: int = 5
     frontend_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
@@ -49,10 +51,13 @@ class Settings(BaseSettings):
     gemini_weight: float = 0.35
     hybrid_disagreement_threshold: float = 25.0
     gemini_timeout_seconds: int = 30
-    cloudinary_cloud_name: str | None = None
-    cloudinary_api_key: str | None = None
-    cloudinary_api_secret: str | None = None
-    use_cloudinary: bool = False
+    billing_provider: str = "manual"
+    billing_webhook_secret: str | None = None
+    trial_days: int = 14
+    google_oauth_enabled: bool = False
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://127.0.0.1:8000/api/v1/auth/oauth/google/callback"
 
     @field_validator("gemini_weight")
     @classmethod

@@ -19,6 +19,32 @@ settings = get_settings()
 logger = logging.getLogger("email")
 
 
+def _deliver(message: EmailMessage, filename: str) -> None:
+    if settings.smtp_host:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(message)
+    else:
+        outbox = Path(".outbox")
+        outbox.mkdir(exist_ok=True)
+        (outbox / filename).write_text(message.as_string(), encoding="utf-8")
+
+
+def send_notification_email(user: User, title: str, body: str, action_url: str | None) -> None:
+    link = f"{settings.frontend_url}{action_url}" if action_url and action_url.startswith("/") else (action_url or settings.frontend_url)
+    message = EmailMessage()
+    message["Subject"] = f"{title} | SmartHire"
+    message["From"] = settings.smtp_from_email
+    message["To"] = user.email
+    message.set_content(f"Hello {user.full_name},\n\n{body}\n\nOpen SmartHire: {link}\n\nYou can manage email preferences in Notification Center.")
+    message.add_alternative(f'''<!doctype html><html><body style="margin:0;background:#f3f6fb;font-family:Arial;color:#10204a"><table width="100%"><tr><td align="center" style="padding:36px 16px"><table width="620" style="max-width:100%;background:#fff;border:1px solid #dce5f1;border-radius:16px"><tr><td style="padding:26px 34px;background:#082b68;color:white;font-size:23px;font-weight:800">SmartHire</td></tr><tr><td style="padding:36px 34px"><div style="color:#07925a;font-size:12px;font-weight:800;letter-spacing:1px">ACCOUNT NOTIFICATION</div><h1 style="font-size:26px;margin:14px 0;color:#10204a">{escape(title)}</h1><p style="font-size:16px;line-height:1.7;color:#59677f">Hello {escape(user.full_name)},</p><p style="font-size:16px;line-height:1.7;color:#59677f">{escape(body)}</p><p style="margin:30px 0"><a href="{escape(link, quote=True)}" style="display:inline-block;padding:14px 24px;background:#1744bd;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">View in SmartHire</a></p><p style="font-size:12px;color:#8994a8">Manage which events are emailed from your SmartHire Notification Center.</p></td></tr></table></td></tr></table></body></html>''', subtype="html")
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    _deliver(message, f"notification-{user.id}-{stamp}.txt")
+
+
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -152,6 +178,23 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
     return token, code, _deliver(message, user)
+
+
+def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:
+    link = f"{settings.frontend_url}/team/invitations/{token}"
+    message = EmailMessage()
+    message["Subject"] = f"Join {organization_name} on SmartHire"
+    message["From"] = settings.smtp_from_email
+    message["To"] = email
+    message.set_content(f"{inviter_name} invited you to join {organization_name} as {role}.\n\nAccept invitation: {link}\n\nThis invitation expires in 7 days.")
+    message.add_alternative(f"""<!doctype html><html><body style="margin:0;background:#f3f6fb;font-family:Arial;color:#12234c"><table width="100%"><tr><td align="center" style="padding:40px 16px"><table width="600" style="max-width:100%;background:#fff;border:1px solid #dce4f0;border-radius:16px"><tr><td style="padding:28px;background:#092966;color:#fff;font-size:24px;font-weight:800">SmartHire</td></tr><tr><td style="padding:38px"><p style="color:#087848;font-weight:700">RECRUITER TEAM INVITATION</p><h1>Join {escape(organization_name)}</h1><p style="color:#59677f;line-height:1.7">{escape(inviter_name)} invited you to collaborate as <strong>{escape(role)}</strong>.</p><p style="margin:30px 0"><a href="{escape(link,quote=True)}" style="padding:14px 24px;border-radius:8px;background:#1744bd;color:#fff;text-decoration:none;font-weight:700">Accept invitation</a></p><p style="color:#8994a8;font-size:12px">This secure invitation expires in seven days.</p></td></tr></table></td></tr></table></body></html>""",subtype="html")
+    if settings.smtp_host:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_use_tls:smtp.starttls()
+            if settings.smtp_username:smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(message)
+    else:
+        outbox=Path(".outbox");outbox.mkdir(exist_ok=True);(outbox/f"invite-{hashlib.sha256(email.encode()).hexdigest()[:16]}.txt").write_text(message.as_string(),encoding="utf-8")
 
 
 def consume_verification(db: Session, *, email: str | None, code: str | None, token: str | None) -> User | None:
