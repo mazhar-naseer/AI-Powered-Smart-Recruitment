@@ -1,12 +1,13 @@
 import json
-import logging
+import time
 import urllib.request
 
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AIAnalysis(BaseModel):
@@ -26,6 +27,11 @@ class AIAnalysis(BaseModel):
 def analyze_with_gemini(resume: str, job: str, skills: list[str], profile: dict | None = None) -> AIAnalysis | None:
     settings = get_settings()
     if not settings.gemini_enabled or not settings.gemini_api_key:
+        logger.debug(
+            "Gemini analysis skipped (enabled=%s, key_configured=%s)",
+            settings.gemini_enabled,
+            bool(settings.gemini_api_key),
+        )
         return None
     prompt = (
         "Evaluate only job-relevant evidence. Ignore name, email, age, gender, nationality, and other protected traits. "
@@ -43,9 +49,29 @@ def analyze_with_gemini(resume: str, job: str, skills: list[str], profile: dict 
     }}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=settings.gemini_timeout_seconds) as response:
-        result = json.load(response)
-    text = result["candidates"][0]["content"]["parts"][0]["text"]
-    analysis = AIAnalysis.model_validate_json(text)
-    logger.info("Gemini resume analysis completed with model %s", settings.gemini_model)
+    started = time.perf_counter()
+    try:
+        with urllib.request.urlopen(request, timeout=settings.gemini_timeout_seconds) as response:
+            result = json.load(response)
+    except Exception as exc:
+        # Never log `url` or the exception's own repr for an HTTPError: the API
+        # key is a query parameter and would end up in the log verbatim.
+        logger.warning(
+            "Gemini request failed after %.2fs: %s", time.perf_counter() - started, type(exc).__name__
+        )
+        raise
+    try:
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
+        analysis = AIAnalysis.model_validate_json(text)
+    except Exception:
+        # A well-formed HTTP 200 whose body does not match the schema means the
+        # model returned prose or was cut off — a different fault from a timeout,
+        # and one that would otherwise be indistinguishable in the caller's log.
+        logger.warning("Gemini returned a response that does not match the expected schema")
+        raise
+    logger.info(
+        "Gemini resume analysis completed with model %s in %.2fs",
+        settings.gemini_model,
+        time.perf_counter() - started,
+    )
     return analysis

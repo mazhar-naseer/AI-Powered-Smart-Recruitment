@@ -21,9 +21,11 @@ from app.models import (
 from app.schemas import AuthOut, UserOut
 from app.security import create_token, hash_password
 from app.tenancy import create_workspace
+from app.logging_config import get_logger
 
 router = APIRouter(prefix="/api/v1/auth/oauth")
 settings = get_settings()
+logger = get_logger(__name__)
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
@@ -101,6 +103,7 @@ def google_start(
     db: Session = Depends(get_db),
 ):
     if not google_configured():
+        logger.warning("Google sign-in requested but the provider is not configured")
         raise HTTPException(503, "Google sign-in is not configured")
     raw_state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
@@ -111,6 +114,7 @@ def google_start(
         expires_at=datetime.now(UTC) + timedelta(minutes=10),
     ))
     db.commit()
+    logger.info("Starting Google OAuth (intent=%s, role=%s)", intent, role)
     query = urlencode({
         "client_id": settings.google_client_id,
         "redirect_uri": settings.google_redirect_uri,
@@ -136,10 +140,14 @@ def google_callback(
     )) if state else None
     return_to = oauth_state.return_to if oauth_state else settings.frontend_url.rstrip("/")
     if not oauth_state:
+        # Also the shape a replayed or forged callback takes, so this is worth a
+        # warning rather than an info line.
+        logger.warning("Google callback rejected: state is unknown, expired, or already consumed")
         return callback_redirect(return_to, error="Google sign-in session is invalid or expired. Please try again.")
     oauth_state.consumed_at = now
     db.commit()
     if error or not code:
+        logger.info("Google callback returned no authorization code (error=%s)", error)
         return callback_redirect(return_to, error="Google sign-in was cancelled.")
     try:
         profile = fetch_google_identity(code, oauth_state.code_verifier)
@@ -152,6 +160,7 @@ def google_callback(
         user = db.get(User, identity.user_id) if identity else db.scalar(select(User).where(User.email == email))
         if not user:
             if oauth_state.intent != "register":
+                logger.info("Google login rejected: no SmartHire account uses %s", email)
                 return callback_redirect(return_to, error="No SmartHire account uses this Google email. Choose a role and register first.")
             role = Role(oauth_state.requested_role)
             full_name = str(profile.get("name") or email.split("@", 1)[0])[:120]
@@ -161,11 +170,14 @@ def google_callback(
                 email_verified=True, status=UserStatus.ACTIVE,
             )
             db.add(user);db.flush()
+            logger.info("Created %s account %s from Google sign-in", role.value, user.id)
             if role == Role.EMPLOYER:
                 create_workspace(db, user, f"{full_name}'s Company")
         if user.role == Role.ADMIN:
+            logger.warning("Google sign-in refused for admin account %s", user.id)
             return callback_redirect(return_to, error="Administrators must use the secure Control Center login.")
         if user.status != UserStatus.ACTIVE:
+            logger.warning("Google sign-in refused: account %s is %s", user.id, user.status.value)
             return callback_redirect(return_to, error="This SmartHire account is not active.")
         user.email_verified = True
         user.last_login_at = now
@@ -175,9 +187,14 @@ def google_callback(
         db.add(OAuthLoginCode(code_hash=digest(raw_login_code), user_id=user.id, expires_at=now + timedelta(minutes=2)))
         db.add(AuditLog(actor_id=user.id, action="auth.google_authenticated", target_type="user", target_id=user.id, metadata_json={"new_account": oauth_state.intent == "register"}))
         db.commit()
+        logger.info("Google authentication succeeded for user %s", user.id)
         return callback_redirect(return_to, code=raw_login_code)
     except (httpx.HTTPError, ValueError):
         db.rollback()
+        # The user only ever sees a generic message, so without this the reason a
+        # sign-in fails — a rejected client secret, a redirect_uri mismatch, an
+        # unverified Google email — is not recorded anywhere.
+        logger.exception("Google sign-in could not be completed")
         return callback_redirect(return_to, error="Google could not verify this sign-in. Please try again.")
 
 
@@ -189,12 +206,15 @@ def exchange(payload: OAuthExchange, db: Session = Depends(get_db)):
         OAuthLoginCode.expires_at > now,
     ))
     if not login_code:
+        logger.warning("Google login code exchange rejected: code is invalid, expired, or already used")
         raise HTTPException(400, "Google login code is invalid, expired, or already used")
     user = db.get(User, login_code.user_id)
     if not user or user.status != UserStatus.ACTIVE:
+        logger.warning("Google login code exchange refused for user %s", login_code.user_id)
         raise HTTPException(403, "SmartHire account is not active")
     login_code.consumed_at = now
     auth = issue_tokens(user, db)
     db.add(AuditLog(actor_id=user.id, action="auth.google_login_completed", target_type="user", target_id=user.id))
     db.commit()
+    logger.info("Issued tokens for Google sign-in of user %s", user.id)
     return envelope(auth.model_dump(mode="json"), "Signed in with Google")

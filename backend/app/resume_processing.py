@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime
 
 from app.config import get_settings
@@ -7,7 +8,10 @@ from app.ai_provider import analyze_with_gemini
 from app.resume_parser import PARSER_VERSION, parse_resume, structured_profile
 from app.scoring import ANALYSIS_VERSION, advanced_score, hybrid_score
 from app.object_storage import resume_storage
+from app.logging_config import get_logger
 
+
+logger = get_logger(__name__)
 
 def sanitize_extracted_text(text: str) -> str:
     """Remove database-invalid PDF control bytes while preserving readable layout."""
@@ -15,11 +19,17 @@ def sanitize_extracted_text(text: str) -> str:
 
 
 def process_application(application_id: str, force: bool = False) -> None:
+    started = time.perf_counter()
     db = SessionLocal()
     try:
         application = db.get(Application, application_id)
-        if not application or (application.status == ApplicationStatus.COMPLETED and not force):
+        if not application:
+            logger.warning("Analysis skipped: application %s no longer exists", application_id)
             return
+        if application.status == ApplicationStatus.COMPLETED and not force:
+            logger.info("Analysis skipped: application %s already completed", application_id)
+            return
+        logger.info("Analyzing application %s (force=%s)", application_id, force)
         text = (application.resume.extracted_text or "").strip()
         if text:
             profile = structured_profile(text, application.job.required_skills, application.job.domain_keywords or [])
@@ -67,6 +77,13 @@ def process_application(application_id: str, force: bool = False) -> None:
             # AI enrichment must never invalidate deterministic resume processing.
             ai = None
             ai_error = f"{type(exc).__name__}: {exc}"[:500]
+            # Warning, not exception: the deterministic score still stands, so
+            # this degrades the result rather than failing the analysis.
+            logger.warning(
+                "AI enrichment failed for application %s, using deterministic score only: %s",
+                application_id,
+                ai_error,
+            )
         application.resume.extracted_text = text
         application.structured_profile = {
             **profile,
@@ -114,12 +131,33 @@ def process_application(application_id: str, force: bool = False) -> None:
         application.processed_at = datetime.now(UTC)
         application.processing_error = None
         db.commit()
+        logger.info(
+            "Analyzed application %s in %.2fs: final=%s deterministic=%s ai_status=%s matched=%d/%d",
+            application_id,
+            time.perf_counter() - started,
+            application.final_score,
+            score,
+            application.ai_status,
+            len(matched),
+            len(application.job.required_skills),
+        )
     except Exception as exc:
         db.rollback()
+        # exception() rather than error(): without the traceback there is no way
+        # to tell a malformed PDF from a bug in the scorer.
+        logger.exception(
+            "Analysis failed for application %s after %.2fs",
+            application_id,
+            time.perf_counter() - started,
+        )
         application = db.get(Application, application_id)
         if application:
             application.status = ApplicationStatus.FAILED
             application.processing_error = str(exc)[:500]
             db.commit()
+        else:
+            logger.error(
+                "Could not mark application %s failed: row is gone", application_id
+            )
     finally:
         db.close()

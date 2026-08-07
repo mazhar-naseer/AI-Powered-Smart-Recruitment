@@ -14,6 +14,9 @@ from app.models import (AuditLog, MembershipRole, Organization, OrganizationMemb
                         OrganizationSubscription, RefreshSession, Role, User, UserStatus)
 from app.saas import PLAN_CATALOG, ensure_subscription
 from app.security import require_roles
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin/governance")
 settings = get_settings()

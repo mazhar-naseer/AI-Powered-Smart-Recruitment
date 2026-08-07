@@ -24,6 +24,9 @@ from app.email_service import send_team_invitation
 from app.config import get_settings
 from app.saas import enforce_limit
 from app.notification_service import create_notification, preferences_for
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()

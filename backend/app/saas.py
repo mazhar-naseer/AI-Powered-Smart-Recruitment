@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Job, JobStatus, OrganizationMembership, OrganizationSubscription, UsageCounter
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 settings = get_settings()
 
@@ -51,6 +54,11 @@ def ensure_subscription(db: Session, organization_id: str) -> OrganizationSubscr
     )
     db.add(subscription)
     db.flush()
+    logger.info(
+        "Opened starter trial for organization %s, ending %s",
+        organization_id,
+        subscription.trial_ends_at.date(),
+    )
     return subscription
 
 
@@ -69,7 +77,21 @@ def current_usage(db: Session, organization_id: str, metric: str) -> int:
 def enforce_limit(db: Session, organization_id: str, metric: str, increment: int = 1) -> None:
     subscription = ensure_subscription(db, organization_id)
     limit = limit_for(subscription, metric)
-    if limit is not None and current_usage(db, organization_id, metric) + increment > limit:
+    if limit is None:
+        return
+    used = current_usage(db, organization_id, metric)
+    if used + increment > limit:
+        # A blocked upgrade-worthy action, so this is a business signal as much as
+        # a technical one — worth finding in the log without a database query.
+        logger.info(
+            "Plan limit reached for organization %s on %s: %d + %d exceeds %d on plan %s",
+            organization_id,
+            metric,
+            used,
+            increment,
+            limit,
+            subscription.plan_key,
+        )
         raise HTTPException(402, {"code": "PLAN_LIMIT_REACHED", "metric": metric, "limit": limit, "plan": subscription.plan_key})
 
 

@@ -1,8 +1,8 @@
 import hashlib
 import json
-import logging
 import secrets
 import smtplib
+import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
@@ -13,10 +13,11 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.logging_config import get_logger
 from app.models import EmailVerification, User
 
 settings = get_settings()
-logger = logging.getLogger("email")
+logger = get_logger("app.email")
 
 
 def send_notification_email(user: User, title: str, body: str, action_url: str | None) -> None:
@@ -28,7 +29,10 @@ def send_notification_email(user: User, title: str, body: str, action_url: str |
     message.set_content(f"Hello {user.full_name},\n\n{body}\n\nOpen SmartHire: {link}\n\nYou can manage email preferences in Notification Center.")
     message.add_alternative(f'''<!doctype html><html><body style="margin:0;background:#f3f6fb;font-family:Arial;color:#10204a"><table width="100%"><tr><td align="center" style="padding:36px 16px"><table width="620" style="max-width:100%;background:#fff;border:1px solid #dce5f1;border-radius:16px"><tr><td style="padding:26px 34px;background:#082b68;color:white;font-size:23px;font-weight:800">SmartHire</td></tr><tr><td style="padding:36px 34px"><div style="color:#07925a;font-size:12px;font-weight:800;letter-spacing:1px">ACCOUNT NOTIFICATION</div><h1 style="font-size:26px;margin:14px 0;color:#10204a">{escape(title)}</h1><p style="font-size:16px;line-height:1.7;color:#59677f">Hello {escape(user.full_name)},</p><p style="font-size:16px;line-height:1.7;color:#59677f">{escape(body)}</p><p style="margin:30px 0"><a href="{escape(link, quote=True)}" style="display:inline-block;padding:14px 24px;background:#1744bd;color:#fff;text-decoration:none;border-radius:8px;font-weight:700">View in SmartHire</a></p><p style="font-size:12px;color:#8994a8">Manage which events are emailed from your SmartHire Notification Center.</p></td></tr></table></td></tr></table></body></html>''', subtype="html")
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
-    _deliver(message, f"notification-{user.id}-{stamp}.txt")
+    if not _deliver(message, f"notification-{user.id}-{stamp}.txt"):
+        # _deliver already recorded why. This adds what was lost, which the
+        # transport layer does not know.
+        logger.info("Notification %r for user %s was not delivered by email", title, user.id)
 
 
 def _hash(value: str) -> str:
@@ -138,6 +142,7 @@ def _deliver(message: EmailMessage, filename: str) -> bool:
     # an HTTPS provider necessary, so trying it first would only add a timeout.
     transport = _send_over_brevo if settings.brevo_api_key else _send_over_smtp
     if settings.brevo_api_key or settings.smtp_host:
+        started = time.perf_counter()
         try:
             transport(message)
         except Exception:
@@ -145,6 +150,13 @@ def _deliver(message: EmailMessage, filename: str) -> bool:
             # place for a credential that grants account access.
             logger.exception("Email to %s could not be sent", message["To"])
             return False
+        logger.info(
+            "Email %r sent to %s via %s in %.2fs",
+            message["Subject"],
+            message["To"],
+            "brevo" if settings.brevo_api_key else "smtp",
+            time.perf_counter() - started,
+        )
         return True
 
     # No provider configured. Local development reads these files; on an
@@ -154,12 +166,14 @@ def _deliver(message: EmailMessage, filename: str) -> bool:
         outbox = Path(".outbox")
         outbox.mkdir(exist_ok=True)
         (outbox / filename).write_text(message.as_string(), encoding="utf-8")
+        logger.info("No email provider configured; wrote %s to .outbox", filename)
     except OSError:
         logger.warning("No email provider is configured and .outbox is not writable")
     return False
 
 
 def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
+    """Supersede any open verification and send a fresh code."""
     token, code = secrets.token_urlsafe(32), f"{secrets.randbelow(1_000_000):06d}"
     db.execute(
         update(EmailVerification)
@@ -172,7 +186,16 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
     ))
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
-    return token, code, _deliver(message, f"{user.id}.txt")
+    delivered = _deliver(message, f"{user.id}.txt")
+    # The code itself is deliberately absent: it is a bearer credential for the
+    # account, and a log file is a poor place to keep one.
+    logger.info(
+        "Issued email verification for %s (delivered=%s, expires in %d minutes)",
+        user.email,
+        delivered,
+        settings.email_verification_minutes,
+    )
+    return token, code, delivered
 
 
 def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:
@@ -183,13 +206,17 @@ def send_team_invitation(email: str, inviter_name: str, organization_name: str, 
     message["To"] = email
     message.set_content(f"{inviter_name} invited you to join {organization_name} as {role}.\n\nAccept invitation: {link}\n\nThis invitation expires in 7 days.")
     message.add_alternative(f"""<!doctype html><html><body style="margin:0;background:#f3f6fb;font-family:Arial;color:#12234c"><table width="100%"><tr><td align="center" style="padding:40px 16px"><table width="600" style="max-width:100%;background:#fff;border:1px solid #dce4f0;border-radius:16px"><tr><td style="padding:28px;background:#092966;color:#fff;font-size:24px;font-weight:800">SmartHire</td></tr><tr><td style="padding:38px"><p style="color:#087848;font-weight:700">RECRUITER TEAM INVITATION</p><h1>Join {escape(organization_name)}</h1><p style="color:#59677f;line-height:1.7">{escape(inviter_name)} invited you to collaborate as <strong>{escape(role)}</strong>.</p><p style="margin:30px 0"><a href="{escape(link,quote=True)}" style="padding:14px 24px;border-radius:8px;background:#1744bd;color:#fff;text-decoration:none;font-weight:700">Accept invitation</a></p><p style="color:#8994a8;font-size:12px">This secure invitation expires in seven days.</p></td></tr></table></td></tr></table></body></html>""",subtype="html")
-    if settings.smtp_host:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
-            if settings.smtp_use_tls:smtp.starttls()
-            if settings.smtp_username:smtp.login(settings.smtp_username, settings.smtp_password or "")
-            smtp.send_message(message)
-    else:
-        outbox=Path(".outbox");outbox.mkdir(exist_ok=True);(outbox/f"invite-{hashlib.sha256(email.encode()).hexdigest()[:16]}.txt").write_text(message.as_string(),encoding="utf-8")
+    # Routed through _deliver so an unreachable mail host cannot 500 the invite
+    # endpoint: the invitation row is already valid and the token is returned to
+    # the inviter, so a failed send degrades the flow rather than breaking it.
+    delivered = _deliver(message, f"invite-{hashlib.sha256(email.encode()).hexdigest()[:16]}.txt")
+    logger.info(
+        "Team invitation to %s for %s as %s (delivered=%s)",
+        email,
+        organization_name,
+        role,
+        delivered,
+    )
 
 
 def consume_verification(db: Session, *, email: str | None, code: str | None, token: str | None) -> User | None:
@@ -202,11 +229,19 @@ def consume_verification(db: Session, *, email: str | None, code: str | None, to
             .filter(User.email == email.lower().strip(), EmailVerification.code_hash == _hash(code))
         )
     if query is None:
+        logger.warning("Verification attempt with neither a token nor an email and code")
         return None
     verification = query.filter(EmailVerification.consumed_at.is_(None)).order_by(EmailVerification.created_at.desc()).first()
-    if not verification or verification.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+    if not verification:
+        # Distinguished from the expiry case below because the causes differ: no
+        # match means a wrong or already-used credential, not a slow user.
+        logger.warning("Verification failed: no open record matches this %s", "token" if token else "code")
+        return None
+    if verification.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+        logger.info("Verification failed: record for user %s expired", verification.user_id)
         return None
     user = db.get(User, verification.user_id)
     verification.consumed_at = datetime.now(UTC)
     user.email_verified = True
+    logger.info("Email verified for user %s", user.id)
     return user

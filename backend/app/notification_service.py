@@ -1,11 +1,10 @@
-import logging
-
 from sqlalchemy.orm import Session
 
 from app.email_service import send_notification_email
+from app.logging_config import get_logger
 from app.models import Notification, User, default_notification_preferences
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def preferences_for(user: User) -> dict[str, bool]:

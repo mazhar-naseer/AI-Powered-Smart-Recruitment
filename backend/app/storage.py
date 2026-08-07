@@ -19,7 +19,6 @@ delivery URL is unusable without a signature even if it leaks.
 
 from __future__ import annotations
 
-import logging
 import mimetypes
 import uuid
 from contextlib import contextmanager
@@ -30,8 +29,9 @@ from typing import Iterator
 from urllib.request import urlopen
 
 from app.config import Settings, get_settings
+from app.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 CLOUDINARY_PREFIX = "cloudinary:"
 RESUME_FOLDER = "smarthire/resumes"

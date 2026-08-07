@@ -1,5 +1,4 @@
 import hashlib
-import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -71,12 +70,13 @@ from app.security import (
 from app.tenancy import create_workspace, ensure_membership, require_permission
 from app.object_storage import avatar_storage, resume_storage
 from app.background_jobs import queue_application_analysis, run_background_job
+from app.logging_config import get_logger
 from app.saas import enforce_limit, increment_usage
 from app.notification_service import create_notification
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def dispatch_background(background: BackgroundTasks, job_id: str) -> None:
@@ -143,6 +143,7 @@ def audit(
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = payload.email.lower().strip()
     if db.scalar(select(User).where(User.email == email)):
+        logger.info("Registration rejected: %s is already in use", email)
         raise HTTPException(409, "An account with this email already exists")
     user = User(
         email=email,
@@ -163,6 +164,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         audit(db, user.id, "auth.register", "user", user.id)
         db.commit()
         db.refresh(user)
+        logger.info(
+            "Registered %s %s with verification disabled; account is active", user.role.value, user.id
+        )
         data = UserOut.model_validate(user).model_dump(mode="json")
         data["verification_required"] = False
         data["verification_email_sent"] = False
@@ -172,6 +176,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     audit(db, user.id, "auth.register", "user", user.id)
     db.commit()
     db.refresh(user)
+    logger.info(
+        "Registered %s %s pending verification (email_sent=%s)", user.role.value, user.id, delivered
+    )
     data = UserOut.model_validate(user).model_dump(mode="json")
     data["verification_required"] = True
     data["verification_email_sent"] = delivered
@@ -189,24 +196,32 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     user = consume_verification(db, email=str(payload.email) if payload.email else None, code=payload.code, token=payload.token)
     if not user:
+        # consume_verification already logged which check rejected it.
         raise HTTPException(400, "Verification code or link is invalid or expired")
     user.last_login_at = datetime.now(UTC)
     auth = issue_tokens(user, db)
     audit(db, user.id, "auth.email_verified", "user", user.id)
     audit(db, user.id, "auth.auto_login_after_verification", "user", user.id)
     db.commit()
+    logger.info("User %s verified their email and was logged in", user.id)
     return envelope(auth.model_dump(mode="json"), "Email verified and logged in")
 
 
 @router.post("/auth/resend-verification")
 def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
     if not settings.email_verification_enabled:
+        logger.info("Resend refused: email verification is disabled")
         raise HTTPException(400, "Email verification is disabled. Log in with your password.")
     user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
     dev_code = None
     if user and not user.email_verified:
         _, dev_code, _ = issue_email_verification(db, user)
         db.commit()
+        logger.info("Reissued a verification code for user %s", user.id)
+    else:
+        # The response is deliberately identical either way so the endpoint does
+        # not reveal whether an account exists. The log records the difference.
+        logger.info("Resend requested for an unknown or already-verified address")
     data = {"dev_verification_code": dev_code} if settings.environment == "development" and not email_provider_configured() and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")
 
@@ -226,19 +241,26 @@ def issue_tokens(user: User, db: Session) -> AuthOut:
 
 @router.post("/auth/login")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email.lower().strip()))
+    email = payload.email.lower().strip()
+    user = db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(payload.password, user.password_hash):
+        # Failed logins are the signal a credential-stuffing attempt shows up as,
+        # so the address is recorded. The submitted password never is.
+        logger.warning("Failed login for %s", email)
         raise HTTPException(401, "Invalid email or password")
     if user.status != UserStatus.ACTIVE:
+        logger.warning("Login refused: account %s is %s", user.id, user.status.value)
         raise HTTPException(403, "Account is not active")
     # Accounts that registered while verification was on would otherwise be
     # stranded once it is turned off: no code can be issued to clear the flag.
     if settings.email_verification_enabled and not user.email_verified:
+        logger.info("Login refused: user %s has not verified their email", user.id)
         raise HTTPException(403, "Email verification required")
     user.last_login_at = datetime.now(UTC)
     auth = issue_tokens(user, db)
     audit(db, user.id, "auth.login", "user", user.id)
     db.commit()
+    logger.info("User %s (%s) logged in", user.id, user.role.value)
     return envelope(auth.model_dump(mode="json"), "Logged in")
 
 
@@ -249,10 +271,19 @@ def refresh(payload: dict, db: Session = Depends(get_db)):
     session = db.get(RefreshSession, decoded["jti"])
     user = db.get(User, decoded["sub"])
     if not session or session.revoked_at or not user or user.status != UserStatus.ACTIVE:
+        # A revoked session presented again can mean a stolen refresh token is
+        # being replayed, which is why this is a warning and names the session.
+        logger.warning(
+            "Refresh rejected for session %s (revoked=%s, user_active=%s)",
+            decoded["jti"],
+            bool(session and session.revoked_at),
+            bool(user and user.status == UserStatus.ACTIVE),
+        )
         raise HTTPException(401, "Refresh session is invalid")
     session.revoked_at = datetime.now(UTC)
     auth = issue_tokens(user, db)
     db.commit()
+    logger.info("Rotated refresh session for user %s", user.id)
     return envelope(auth.model_dump(mode="json"), "Token refreshed")
 
 
@@ -263,6 +294,7 @@ def logout(payload: dict, db: Session = Depends(get_db)):
     if session and not session.revoked_at:
         session.revoked_at = datetime.now(UTC)
         db.commit()
+        logger.info("User %s logged out, session %s revoked", decoded["sub"], decoded["jti"])
     return envelope(message="Logged out")
 
 
@@ -290,6 +322,7 @@ async def upload_profile_avatar(
 ):
     content = await avatar.read()
     if not content or len(content) > 3 * 1024 * 1024:
+        logger.info("Avatar upload rejected for user %s: %d bytes", user.id, len(content))
         raise HTTPException(413, "Profile photo must be smaller than 3 MB")
     signatures = {
         b"\xff\xd8\xff": (".jpg", "image/jpeg"),
@@ -300,14 +333,23 @@ async def upload_profile_avatar(
     if detected and detected[0] == ".webp" and content[8:12] != b"WEBP":
         detected = None
     if not detected:
+        # The type is decided by the magic bytes, not the client's content type,
+        # so a rejection here means the file really is not an image.
+        logger.info("Avatar upload rejected for user %s: unrecognised file signature", user.id)
         raise HTTPException(415, "Only JPG, PNG, or WEBP profile photos are accepted")
     suffix, _mime = detected
     previous_key = user.avatar_path
-    user.avatar_path = avatar_storage.put(content, suffix)
+    try:
+        user.avatar_path = avatar_storage.put(content, suffix)
+    except OSError:
+        # object_storage logged the path; this maps it to a response rather than
+        # letting an unwritable volume surface as a bare 500.
+        raise HTTPException(503, "Profile photo could not be stored. Please try again.") from None
     audit(db, user.id, "profile.avatar_updated", "user", user.id)
     db.commit()
     if previous_key:
         avatar_storage.delete(previous_key)
+    logger.info("User %s updated their profile photo (%d bytes)", user.id, len(content))
     return envelope({"avatar_url": "/api/v1/profiles/me/avatar"}, "Profile photo updated")
 
 
@@ -318,7 +360,10 @@ def profile_avatar(user: User = Depends(current_user)):
     try:
         path = avatar_storage.path(user.avatar_path)
     except FileNotFoundError:
-        raise HTTPException(404, "Profile photo not found")
+        # The row points at a key that is no longer on disk, so the record and the
+        # volume have drifted apart. Storage logged the key.
+        logger.warning("User %s has an avatar row with no file behind it", user.id)
+        raise HTTPException(404, "Profile photo not found") from None
     mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
     return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
 
@@ -491,9 +536,19 @@ async def apply(
     valid_pdf = suffix == ".pdf" and content.startswith(b"%PDF-")
     valid_docx = suffix == ".docx" and content.startswith(b"PK")
     if not (valid_pdf or valid_docx):
+        # Checked against the magic bytes as well as the extension, so a rejection
+        # means the content itself is wrong, not just the name.
+        logger.info(
+            "Application rejected for job %s: %r is not a valid PDF or DOCX", job_id, suffix
+        )
         raise HTTPException(422, "A valid PDF or DOCX resume is required")
     mime_type = "application/pdf" if valid_pdf else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    key = resume_storage.put(content, suffix)
+    try:
+        key = resume_storage.put(content, suffix)
+    except OSError:
+        # Nothing has been written to the database yet, so failing here leaves no
+        # orphaned row. object_storage logged the target directory.
+        raise HTTPException(503, "Resume could not be stored. Please try again.") from None
     record = Resume(
         applicant_id=user.id,
         storage_key=key,
@@ -521,6 +576,13 @@ async def apply(
         resume_storage.delete(key)
         constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
         if constraint == "uq_application_job_applicant":
+            # Two submissions raced past the duplicate check above; the unique
+            # index is what actually decides, so this is expected, not a defect.
+            logger.info(
+                "Duplicate application from user %s to job %s caught by the unique index",
+                user.id,
+                job_id,
+            )
             raise HTTPException(409, "You have already applied to this job") from exc
         logger.exception("Application creation failed due to database integrity constraint %s", constraint)
         raise HTTPException(500, "Application could not be created. Please try again.") from exc
@@ -528,6 +590,15 @@ async def apply(
     queued = queue_application_analysis(db, application.id, job.organization_id)
     db.commit()
     dispatch_background(background, queued.id)
+    logger.info(
+        "Accepted application %s from user %s for job %s (%d bytes, %s), analysis job %s queued",
+        application.id,
+        user.id,
+        job_id,
+        len(content),
+        suffix,
+        queued.id,
+    )
     return envelope(
         {"id": application.id, "status": application.status.value},
         "Application accepted for processing",
@@ -673,9 +744,13 @@ def download_resume(
     try:
         resume_path = resume_storage.path(app.resume.storage_key)
     except FileNotFoundError as exc:
+        logger.warning("Resume for application %s is missing from storage", app.id)
         raise HTTPException(404, "Resume file not found") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
+    # A recruiter reading a candidate's document is a privacy-relevant event, so
+    # it is recorded in the log as well as the audit table.
+    logger.info("User %s downloaded the resume for application %s", user.id, app.id)
     return FileResponse(
         resume_path, media_type=app.resume.mime_type, filename=app.resume.original_filename
     )
@@ -866,6 +941,7 @@ def set_status(
     if payload.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
         raise HTTPException(422, "Use delete endpoint for deletion")
     target.status = payload.status
+    revoked = 0
     if payload.status == UserStatus.SUSPENDED:
         now = datetime.now(UTC)
         for session in db.scalars(
@@ -874,8 +950,16 @@ def set_status(
             )
         ).all():
             session.revoked_at = now
+            revoked += 1
     audit(db, admin.id, f"user.{payload.status.value}", "user", target.id)
     db.commit()
+    logger.info(
+        "Admin %s set user %s to %s (%d sessions revoked)",
+        admin.id,
+        target.id,
+        payload.status.value,
+        revoked,
+    )
     return envelope(UserOut.model_validate(target).model_dump(mode="json"), "User status updated")
 
 
@@ -984,9 +1068,15 @@ def admin_download_resume(
     try:
         resume_path = resume_storage.path(application.resume.storage_key)
     except FileNotFoundError as exc:
+        logger.warning("Resume for application %s is missing from storage", application.id)
         raise HTTPException(404, "Resume file not found") from exc
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
+    # An administrator can reach any workspace's documents, so this crosses a
+    # tenant boundary and is worth a log line of its own.
+    logger.info(
+        "Admin %s downloaded the resume for application %s", admin.id, application.id
+    )
     return Response(
         resume_path.read_bytes(),
         media_type=application.resume.mime_type,

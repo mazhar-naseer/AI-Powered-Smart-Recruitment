@@ -17,6 +17,9 @@ from app.models import (
 from app.saas import PLAN_CATALOG, ensure_subscription, usage_snapshot
 from app.security import require_roles
 from app.tenancy import ensure_membership, require_permission
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
@@ -94,8 +97,14 @@ def change_plan(payload: PlanChange, user: User = Depends(require_roles(Role.EMP
     membership = ensure_membership(db, user)
     require_permission(db, user, "organization.manage", membership.organization_id)
     if payload.plan_key not in PLAN_CATALOG:
+        logger.warning("Plan change refused: %r is not a known plan", payload.plan_key)
         raise HTTPException(422, "Unknown subscription plan")
     if settings.billing_provider != "manual":
+        logger.warning(
+            "Manual plan change refused for organization %s: billing provider is %s",
+            membership.organization_id,
+            settings.billing_provider,
+        )
         raise HTTPException(409, "Use the configured billing provider checkout to change this plan")
     subscription = ensure_subscription(db, membership.organization_id)
     now = datetime.now(UTC)
@@ -106,6 +115,12 @@ def change_plan(payload: PlanChange, user: User = Depends(require_roles(Role.EMP
     subscription.trial_ends_at = None
     db.add(AuditLog(actor_id=user.id, action="billing.plan_changed", target_type="organization", target_id=membership.organization_id, metadata_json={"plan": payload.plan_key, "provider": "manual"}))
     db.commit()
+    logger.info(
+        "Organization %s moved to plan %s by user %s (manual billing)",
+        membership.organization_id,
+        payload.plan_key,
+        user.id,
+    )
     return envelope(subscription_dict(subscription), "Plan changed in manual billing mode")
 
 
@@ -118,6 +133,15 @@ def workspace_export(user: User = Depends(require_roles(Role.EMPLOYER)), db: Ses
     applications = db.scalars(select(Application).where(Application.organization_id == organization.id)).all()
     db.add(AuditLog(actor_id=user.id, action="privacy.workspace_exported", target_type="organization", target_id=organization.id))
     db.commit()
+    # A full export of a workspace's jobs and applications is exactly the event a
+    # later privacy or incident review needs to be able to find.
+    logger.info(
+        "User %s exported organization %s: %d jobs, %d applications",
+        user.id,
+        organization.id,
+        len(jobs),
+        len(applications),
+    )
     return envelope({
         "exported_at": datetime.now(UTC).isoformat(),
         "organization": {"id": organization.id, "name": organization.name, "slug": organization.slug, "settings": organization.settings_json},
@@ -130,16 +154,35 @@ def workspace_export(user: User = Depends(require_roles(Role.EMPLOYER)), db: Ses
 async def billing_webhook(provider: str, request: Request, x_smarthire_billing_signature: str | None = Header(default=None), db: Session = Depends(get_db)):
     body = await request.body()
     if not settings.billing_webhook_secret:
+        logger.error("Billing webhook from %s rejected: no webhook secret is configured", provider)
         raise HTTPException(503, "Billing webhooks are not configured")
     expected = hmac.new(settings.billing_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
     if not x_smarthire_billing_signature or not hmac.compare_digest(expected, x_smarthire_billing_signature):
+        # Neither signature is logged: the expected value is derived from the
+        # shared secret, and printing it would hand an attacker a valid one.
+        logger.warning(
+            "Billing webhook from %s rejected: signature %s",
+            provider,
+            "missing" if not x_smarthire_billing_signature else "does not match",
+        )
         raise HTTPException(401, "Invalid billing webhook signature")
-    payload = json.loads(body)
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        # A signed body that is not JSON means the provider and this handler
+        # disagree about the format — a 400 the sender can act on, not a 500.
+        logger.warning("Billing webhook from %s carried a signed but unparsable body", provider)
+        raise HTTPException(400, "Billing webhook body is not valid JSON") from None
+    if not isinstance(payload, dict):
+        logger.warning("Billing webhook from %s sent a %s where an object was expected", provider, type(payload).__name__)
+        raise HTTPException(422, "Billing event must be a JSON object")
     event_id = str(payload.get("id", ""))
     event_type = str(payload.get("type", ""))
     if not event_id or not event_type:
+        logger.warning("Billing webhook from %s is missing an event id or type", provider)
         raise HTTPException(422, "Billing event id and type are required")
     if db.scalar(select(BillingEvent).where(BillingEvent.provider_event_id == event_id)):
+        logger.info("Billing event %s from %s already processed, ignoring replay", event_id, provider)
         return envelope(message="Billing event already processed")
     db.add(BillingEvent(provider=provider, provider_event_id=event_id, event_type=event_type, payload=payload))
     data = payload.get("data", {})
@@ -148,10 +191,25 @@ async def billing_webhook(provider: str, request: Request, x_smarthire_billing_s
         subscription = ensure_subscription(db, organization_id)
         if data.get("plan_key") in PLAN_CATALOG:
             subscription.plan_key = data["plan_key"]
+        elif data.get("plan_key") is not None:
+            logger.warning(
+                "Billing event %s named unknown plan %r, keeping %s",
+                event_id,
+                data.get("plan_key"),
+                subscription.plan_key,
+            )
         subscription.status = data.get("status", subscription.status)
         subscription.external_customer_id = data.get("customer_id", subscription.external_customer_id)
         subscription.external_subscription_id = data.get("subscription_id", subscription.external_subscription_id)
+        logger.info(
+            "Billing event %s updated organization %s to plan %s (status=%s)",
+            event_id,
+            organization_id,
+            subscription.plan_key,
+            subscription.status,
+        )
     db.commit()
+    logger.info("Processed billing event %s (%s) from %s", event_id, event_type, provider)
     return envelope(message="Billing event processed")
 
 

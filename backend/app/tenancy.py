@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.models import MembershipRole, Organization, OrganizationMembership, PipelineStage, User
 from app.saas import ensure_subscription
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 PERMISSIONS = {
     MembershipRole.OWNER: {"organization.manage", "team.manage", "jobs.manage", "candidates.manage", "candidates.comment", "analytics.view"},
