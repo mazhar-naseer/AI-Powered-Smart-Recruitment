@@ -23,8 +23,13 @@ def upgrade() -> None:
         sa.Column("company_website", sa.String(500)), sa.Column("company_size", sa.String(40)),
         sa.Column("company_description", sa.Text()), sa.Column("founded_year", sa.Integer()),
     ]
+    # 0001 creates the schema from the current models, so on a fresh database
+    # these columns already exist. Guard each one, as 0002 does.
+    inspector = sa.inspect(op.get_bind())
+    existing = {column["name"] for column in inspector.get_columns("users")}
     for column in columns:
-        op.add_column("users", column)
+        if column.name not in existing:
+            op.add_column("users", column)
 
 
 def downgrade() -> None:

@@ -6,9 +6,13 @@ os.environ["RESUME_STORAGE_PATH"] = "./test_storage"
 os.environ["AVATAR_STORAGE_PATH"] = "./test_avatars"
 os.environ["SECRET_KEY"] = "test-secret-key-long-enough-for-tests"
 os.environ["ENVIRONMENT"] = "development"
+# Settings reads ../.env, so anything left unpinned here leaks a developer's
+# real credentials into the suite and sends live traffic to third parties.
 os.environ["SMTP_HOST"] = ""
 os.environ["SMTP_USERNAME"] = ""
 os.environ["SMTP_PASSWORD"] = ""
+os.environ["BREVO_API_KEY"] = ""
+os.environ["USE_CLOUDINARY"] = "false"
 os.environ["GEMINI_API_KEY"] = ""
 
 import pytest

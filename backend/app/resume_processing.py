@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from pathlib import Path
 
 from app.config import get_settings
 from app.database import SessionLocal

@@ -1,6 +1,9 @@
 import hashlib
+import json
+import logging
 import secrets
 import smtplib
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from html import escape
@@ -13,6 +16,7 @@ from app.config import get_settings
 from app.models import EmailVerification, User
 
 settings = get_settings()
+logger = logging.getLogger("email")
 
 
 def _deliver(message: EmailMessage, filename: str) -> None:
@@ -87,7 +91,80 @@ def build_verification_message(user: User, code: str, link: str) -> EmailMessage
     return message
 
 
-def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
+def _send_over_brevo(message: EmailMessage) -> None:
+    """Hand the message to Brevo's HTTPS transactional endpoint.
+
+    Plain urllib, matching app.ai_provider — one HTTPS POST does not justify a
+    dependency. urlopen raises HTTPError on a non-2xx, so a rejected sender or a
+    bad key surfaces as an exception rather than a silent no-op.
+    """
+    payload = {
+        "sender": {"email": settings.smtp_from_email, "name": settings.smtp_from_name},
+        "to": [{"email": message["To"]}],
+        "subject": message["Subject"],
+        "textContent": message.get_body(preferencelist=("plain",)).get_content(),
+        "htmlContent": message.get_body(preferencelist=("html",)).get_content(),
+    }
+    request = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "api-key": settings.brevo_api_key},
+    )
+    with urllib.request.urlopen(request, timeout=settings.smtp_timeout_seconds):
+        pass
+
+
+def _send_over_smtp(message: EmailMessage) -> None:
+    # Port 465 is implicit TLS: the handshake happens before any SMTP command, so
+    # STARTTLS on that port fails. Ports 587 and 25 upgrade an existing plaintext
+    # connection instead. Choosing on the port rather than on smtp_use_tls alone
+    # means a 465 provider works without a second, easily-forgotten setting.
+    timeout = settings.smtp_timeout_seconds
+    if settings.smtp_port == 465:
+        client = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=timeout)
+    else:
+        client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout)
+    with client as smtp:
+        if settings.smtp_use_tls and settings.smtp_port != 465:
+            smtp.starttls()
+        if settings.smtp_username:
+            smtp.login(settings.smtp_username, settings.smtp_password or "")
+        smtp.send_message(message)
+
+
+def _deliver(message: EmailMessage, user: User) -> bool:
+    """Send the message, returning whether it actually left the process.
+
+    Never raises. Delivery is a side effect of registration, not part of it: a
+    refused login, a blocked port, or a provider timeout must not undo an
+    otherwise valid signup. The caller decides how to tell the user.
+    """
+    # Brevo wins when both are set. SMTP is unreachable on the hosts that make
+    # an HTTPS provider necessary, so trying it first would only add a timeout.
+    transport = _send_over_brevo if settings.brevo_api_key else _send_over_smtp
+    if settings.brevo_api_key or settings.smtp_host:
+        try:
+            transport(message)
+        except Exception:
+            # Recipient only, never the code or token — this log is not a safe
+            # place for a credential that grants account access.
+            logger.exception("Verification email to %s could not be sent", user.email)
+            return False
+        return True
+
+    # No provider configured. Local development reads these files; on an
+    # ephemeral host they are only a breadcrumb, so a failed write is not worth
+    # an error.
+    try:
+        outbox = Path(".outbox")
+        outbox.mkdir(exist_ok=True)
+        (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
+    except OSError:
+        logger.warning("No email provider is configured and .outbox is not writable")
+    return False
+
+
+def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
     token, code = secrets.token_urlsafe(32), f"{secrets.randbelow(1_000_000):06d}"
     db.execute(
         update(EmailVerification)
@@ -100,18 +177,7 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str]:
     ))
     link = f"{settings.frontend_url}/verify-email?token={token}"
     message = build_verification_message(user, code, link)
-    if settings.smtp_host:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
-            if settings.smtp_use_tls:
-                smtp.starttls()
-            if settings.smtp_username:
-                smtp.login(settings.smtp_username, settings.smtp_password or "")
-            smtp.send_message(message)
-    else:
-        outbox = Path(".outbox")
-        outbox.mkdir(exist_ok=True)
-        (outbox / f"{user.id}.txt").write_text(message.as_string(), encoding="utf-8")
-    return token, code
+    return token, code, _deliver(message, user)
 
 
 def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:

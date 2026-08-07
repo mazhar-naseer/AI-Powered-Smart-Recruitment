@@ -10,21 +10,51 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # 0001 creates the schema from the current models, so on a fresh database
+    # these columns already exist. Guard each one, as 0002 does.
     inspector = sa.inspect(op.get_bind())
-    op.add_column("jobs", sa.Column("scorecard", sa.JSON(), nullable=False, server_default="{}"))
-    op.add_column("jobs", sa.Column("skill_priorities", sa.JSON(), nullable=False, server_default="{}"))
-    op.add_column("jobs", sa.Column("domain_keywords", sa.JSON(), nullable=False, server_default="[]"))
-    op.add_column("jobs", sa.Column("education_requirements", sa.JSON(), nullable=False, server_default="[]"))
-    op.add_column("jobs", sa.Column("certification_requirements", sa.JSON(), nullable=False, server_default="[]"))
-    op.add_column("applications", sa.Column("structured_profile", sa.JSON(), nullable=False, server_default="{}"))
-    op.add_column("applications", sa.Column("evidence_matrix", sa.JSON(), nullable=False, server_default="[]"))
-    op.add_column("applications", sa.Column("analysis_version", sa.String(length=40), nullable=False, server_default="advanced-v1"))
-    op.add_column("applications", sa.Column("parser_version", sa.String(length=40), nullable=True))
-    op.add_column("applications", sa.Column("override_score", sa.Float(), nullable=True))
-    op.add_column("applications", sa.Column("override_reason", sa.Text(), nullable=True))
-    op.add_column("applications", sa.Column("overridden_by_id", sa.String(length=36), nullable=True))
-    op.add_column("applications", sa.Column("overridden_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_foreign_key("fk_applications_overridden_by", "applications", "users", ["overridden_by_id"], ["id"])
+
+    def add_missing(table: str, columns: list[sa.Column]) -> None:
+        existing = {column["name"] for column in inspector.get_columns(table)}
+        for column in columns:
+            if column.name not in existing:
+                op.add_column(table, column)
+
+    add_missing(
+        "jobs",
+        [
+            sa.Column("scorecard", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("skill_priorities", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("domain_keywords", sa.JSON(), nullable=False, server_default="[]"),
+            sa.Column("education_requirements", sa.JSON(), nullable=False, server_default="[]"),
+            sa.Column("certification_requirements", sa.JSON(), nullable=False, server_default="[]"),
+        ],
+    )
+    add_missing(
+        "applications",
+        [
+            sa.Column("structured_profile", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("evidence_matrix", sa.JSON(), nullable=False, server_default="[]"),
+            sa.Column("analysis_version", sa.String(length=40), nullable=False, server_default="advanced-v1"),
+            sa.Column("parser_version", sa.String(length=40), nullable=True),
+            sa.Column("override_score", sa.Float(), nullable=True),
+            sa.Column("override_reason", sa.Text(), nullable=True),
+            sa.Column("overridden_by_id", sa.String(length=36), nullable=True),
+            sa.Column("overridden_at", sa.DateTime(timezone=True), nullable=True),
+        ],
+    )
+
+    # Match on the constrained column, not the constraint name: create_all names
+    # this FK applications_overridden_by_id_fkey, so a name check would miss it
+    # and Postgres would happily create a second, redundant constraint.
+    existing_fk_columns = {
+        tuple(fk["constrained_columns"]) for fk in inspector.get_foreign_keys("applications")
+    }
+    if ("overridden_by_id",) not in existing_fk_columns:
+        op.create_foreign_key(
+            "fk_applications_overridden_by", "applications", "users", ["overridden_by_id"], ["id"]
+        )
+
     if "score_overrides" not in inspector.get_table_names():
         op.create_table(
             "score_overrides",

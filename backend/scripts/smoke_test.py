@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 
-BASE_URL = "http://127.0.0.1:8000/api/v1"
+BASE_URL = "http://localhost:8000/api/v1"
 PASSWORD = "SmartHireTest123!"
 
 
@@ -22,7 +22,7 @@ def headers(token: str) -> dict[str, str]:
 def main() -> None:
     resume_path = Path(__file__).parents[2] / "Backend_Design_Document_5_Pages.pdf"
     with httpx.Client(timeout=40) as client:
-        health = client.get("http://127.0.0.1:8000/health")
+        health = client.get("http://localhost:8000//health")
         health.raise_for_status()
         tokens = {
             role: login(client, f"{role}.test@example.com")

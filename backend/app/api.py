@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -135,7 +135,7 @@ def audit(
     db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id, metadata_json={"organization_id": organization_id} if organization_id else {}))
 
 
-@router.post("/auth/register", status_code=201)
+@router.post("/auth/register", status_code=201)   
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = payload.email.lower().strip()
     if db.scalar(select(User).where(User.email == email)):
@@ -158,9 +158,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(user)
     data = UserOut.model_validate(user).model_dump(mode="json")
     data["verification_required"] = True
+    data["verification_email_sent"] = delivered
     if settings.environment == "development" and not settings.smtp_host:
         data["dev_verification_code"] = dev_code
-    return envelope(data, "Account created. Check your email to verify it.")
+    return envelope(
+        data,
+        "Account created. Check your email to verify it."
+        if delivered
+        else "Account created, but the verification email could not be sent. Request a new one.",
+    )
 
 
 @router.post("/auth/verify-email")
@@ -181,7 +187,7 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
     user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
     dev_code = None
     if user and not user.email_verified:
-        _, dev_code = issue_email_verification(db, user)
+        _, dev_code, _ = issue_email_verification(db, user)
         db.commit()
     data = {"dev_verification_code": dev_code} if settings.environment == "development" and not settings.smtp_host and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")
@@ -644,6 +650,10 @@ def download_resume(
     membership = ensure_membership(db, user)
     if not app or app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
+    try:
+        content = read_resume(app.resume.storage_key, settings)
+    except StorageError as exc:
+        raise HTTPException(404, "Resume file not found") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
     return FileResponse(
@@ -957,10 +967,14 @@ def admin_download_resume(
         raise HTTPException(404, "Resume file not found")
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
-    return FileResponse(
-        resume_path,
+    return Response(
+        content,
         media_type=application.resume.mime_type,
-        filename=application.resume.original_filename,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{application.resume.original_filename}"'
+            )
+        },
     )
 
 
