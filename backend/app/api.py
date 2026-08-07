@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ from app.models import (
     Application,
     ApplicationStatus,
     AuditLog,
+    CandidateTimeline,
     Job,
     JobStatus,
     RefreshSession,
@@ -33,6 +35,9 @@ from app.models import (
     ScoreOverride,
     User,
     UserStatus,
+    PipelineStage,
+    Notification,
+    OrganizationMembership,
 )
 from app.resume_processing import process_application
 from app.schemas import (
@@ -63,19 +68,20 @@ from app.security import (
     require_roles,
     verify_password,
 )
-from app.storage import (
-    StorageError,
-    avatar_media_type,
-    delete_avatar,
-    delete_resume,
-    read_avatar,
-    read_resume,
-    save_avatar,
-    save_resume,
-)
+from app.tenancy import create_workspace, ensure_membership, require_permission
+from app.object_storage import avatar_storage, resume_storage
+from app.background_jobs import queue_application_analysis, run_background_job
+from app.saas import enforce_limit, increment_usage
+from app.notification_service import create_notification
 
 router = APIRouter(prefix="/api/v1")
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def dispatch_background(background: BackgroundTasks, job_id: str) -> None:
+    if settings.inline_background_jobs:
+        background.add_task(run_background_job, job_id)
 
 
 def envelope(data=None, message: str = "Success") -> dict:
@@ -84,6 +90,8 @@ def envelope(data=None, message: str = "Success") -> dict:
 
 def job_dict(job: Job, count: int | None = None) -> dict:
     data = JobOut.model_validate(job).model_dump(mode="json")
+    if job.organization_id and job.organization:
+        data["employer"]["company_name"] = job.organization.name
     data["application_count"] = count if count is not None else len(job.applications)
     return data
 
@@ -124,7 +132,11 @@ def audit(
     target_type: str | None = None,
     target_id: str | None = None,
 ) -> None:
-    db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id))
+    organization_id = None
+    if actor:
+        actor_user = db.get(User, actor)
+        organization_id = actor_user.active_organization_id if actor_user else None
+    db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id, metadata_json={"organization_id": organization_id} if organization_id else {}))
 
 
 @router.post("/auth/register", status_code=201)   
@@ -142,6 +154,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.flush()
+    if user.role == Role.EMPLOYER:
+        create_workspace(db, user, payload.company_name)
     # With verification off no code is issued at all, so there is nothing to
     # send and nothing to consume: the account is active and login is the next
     # step. Keep the response keys stable so clients need no branching.
@@ -288,16 +302,12 @@ async def upload_profile_avatar(
     if not detected:
         raise HTTPException(415, "Only JPG, PNG, or WEBP profile photos are accepted")
     suffix, _mime = detected
-    try:
-        storage_key = save_avatar(content, user.id, suffix, settings)
-    except StorageError as exc:
-        raise HTTPException(500, str(exc)) from exc
-    previous = user.avatar_path
-    user.avatar_path = storage_key
+    previous_key = user.avatar_path
+    user.avatar_path = avatar_storage.put(content, suffix)
     audit(db, user.id, "profile.avatar_updated", "user", user.id)
     db.commit()
-    if previous:
-        delete_avatar(previous, settings)
+    if previous_key:
+        avatar_storage.delete(previous_key)
     return envelope({"avatar_url": "/api/v1/profiles/me/avatar"}, "Profile photo updated")
 
 
@@ -306,16 +316,11 @@ def profile_avatar(user: User = Depends(current_user)):
     if not user.avatar_path:
         raise HTTPException(404, "Profile photo not found")
     try:
-        content = read_avatar(user.avatar_path, settings)
-    except StorageError as exc:
-        raise HTTPException(404, "Profile photo not found") from exc
-    media_type = avatar_media_type(user.avatar_path)
-    suffix = Path(user.avatar_path).suffix.lower() or ".jpg"
-    return Response(
-        content,
-        media_type=media_type,
-        headers={"Content-Disposition": f'inline; filename="profile{suffix}"'},
-    )
+        path = avatar_storage.path(user.avatar_path)
+    except FileNotFoundError:
+        raise HTTPException(404, "Profile photo not found")
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
+    return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
 
 
 @router.get("/jobs")
@@ -372,10 +377,11 @@ def employer_jobs(
     user: User = Depends(require_roles(Role.EMPLOYER)),
     db: Session = Depends(get_db),
 ):
+    membership = ensure_membership(db, user)
     stmt = (
         select(Job)
         .options(joinedload(Job.employer), joinedload(Job.applications))
-        .where(Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        .where(Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     )
     jobs = (
         db.scalars(
@@ -387,7 +393,7 @@ def employer_jobs(
     total = (
         db.scalar(
             select(func.count(Job.id)).where(
-                Job.employer_id == user.id, Job.status != JobStatus.DELETED
+                Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED
             )
         )
         or 0
@@ -408,7 +414,10 @@ def create_job(
     user: User = Depends(require_roles(Role.EMPLOYER)),
     db: Session = Depends(get_db),
 ):
-    job = Job(employer_id=user.id, **payload.model_dump())
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "jobs.manage", membership.organization_id)
+    enforce_limit(db, membership.organization_id, "active_jobs")
+    job = Job(employer_id=user.id, organization_id=membership.organization_id, **payload.model_dump())
     db.add(job)
     audit(db, user.id, "job.created", "job", job.id)
     db.commit()
@@ -418,10 +427,12 @@ def create_job(
 
 
 def owned_job(job_id: str, user: User, db: Session) -> Job:
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "jobs.manage", membership.organization_id)
     job = db.scalar(
         select(Job)
         .options(joinedload(Job.employer), joinedload(Job.applications))
-        .where(Job.id == job_id, Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        .where(Job.id == job_id, Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     )
     if not job:
         raise HTTPException(404, "Job not found")
@@ -466,6 +477,8 @@ async def apply(
     job = db.scalar(select(Job).where(Job.id == job_id, Job.status == JobStatus.OPEN))
     if not job:
         raise HTTPException(404, "Open job not found")
+    if job.organization_id:
+        enforce_limit(db, job.organization_id, "ai_analyses_monthly")
     if db.scalar(
         select(Application).where(Application.job_id == job_id, Application.applicant_id == user.id)
     ):
@@ -480,28 +493,41 @@ async def apply(
     if not (valid_pdf or valid_docx):
         raise HTTPException(422, "A valid PDF or DOCX resume is required")
     mime_type = "application/pdf" if valid_pdf else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    try:
-        storage_key = save_resume(content, suffix, settings)
-    except StorageError as exc:
-        raise HTTPException(500, str(exc)) from exc
+    key = resume_storage.put(content, suffix)
     record = Resume(
         applicant_id=user.id,
-        storage_key=storage_key,
+        storage_key=key,
         original_filename=filename,
         mime_type=mime_type,
         size_bytes=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
     )
-    application = Application(job_id=job_id, applicant_id=user.id, resume=record)
+    default_stage = db.scalar(select(PipelineStage).where(PipelineStage.organization_id == job.organization_id, PipelineStage.is_default.is_(True)).order_by(PipelineStage.position)) if job.organization_id else None
+    application = Application(id=str(uuid.uuid4()), job_id=job_id, applicant_id=user.id, organization_id=job.organization_id, stage_id=default_stage.id if default_stage else None, resume=record)
     db.add(application)
+    # Persist the application before timeline and notification rows so PostgreSQL
+    # can validate their foreign keys deterministically during the same transaction.
+    db.flush()
+    if job.organization_id:
+        increment_usage(db, job.organization_id, "ai_analyses_monthly")
+        increment_usage(db, job.organization_id, "storage_mb", max(1, math.ceil(len(content) / (1024 * 1024))))
+        db.add(CandidateTimeline(organization_id=job.organization_id, application_id=application.id, actor_id=user.id, event_type="application_received", description=f"{user.full_name} applied for {job.title}."))
+        for membership in db.scalars(select(OrganizationMembership).where(OrganizationMembership.organization_id == job.organization_id, OrganizationMembership.status == "active")).all():
+            create_notification(db, user_id=membership.user_id, organization_id=job.organization_id, type_="new_candidate", title=f"New applicant for {job.title}", message=f"{user.full_name} submitted an application.", action_url=f"/employer/candidates/{application.id}", email_category="new_applications")
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        delete_resume(storage_key, settings)
-        raise HTTPException(409, "You have already applied to this job") from exc
+        resume_storage.delete(key)
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint == "uq_application_job_applicant":
+            raise HTTPException(409, "You have already applied to this job") from exc
+        logger.exception("Application creation failed due to database integrity constraint %s", constraint)
+        raise HTTPException(500, "Application could not be created. Please try again.") from exc
     db.refresh(application)
-    background.add_task(process_application, application.id)
+    queued = queue_application_analysis(db, application.id, job.organization_id)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "status": application.status.value},
         "Application accepted for processing",
@@ -562,7 +588,9 @@ def retry_application_processing(
     application.processing_error = None
     application.processed_at = None
     db.commit()
-    background.add_task(process_application, application.id)
+    queued = queue_application_analysis(db, application.id, application.organization_id)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "status": application.status.value},
         "Resume analysis restarted",
@@ -591,7 +619,9 @@ def retry_application_ai(
     application.ai_status = "processing"
     application.ai_error = None
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope({"id": application.id, "ai_status": "processing"}, "Gemini analysis restarted")
 
 
@@ -637,20 +667,17 @@ def download_resume(
         .options(joinedload(Application.job), joinedload(Application.resume))
         .where(Application.id == application_id)
     )
-    if not app or app.job.employer_id != user.id:
+    membership = ensure_membership(db, user)
+    if not app or app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     try:
-        content = read_resume(app.resume.storage_key, settings)
-    except StorageError as exc:
+        resume_path = resume_storage.path(app.resume.storage_key)
+    except FileNotFoundError as exc:
         raise HTTPException(404, "Resume file not found") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
-    return Response(
-        content,
-        media_type=app.resume.mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{app.resume.original_filename}"'
-        },
+    return FileResponse(
+        resume_path, media_type=app.resume.mime_type, filename=app.resume.original_filename
     )
 
 
@@ -664,13 +691,17 @@ def employer_reanalyze_application(
     application = db.scalar(
         select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
     )
-    if not application or application.job.employer_id != user.id:
+    membership = ensure_membership(db, user)
+    require_permission(db, user, "candidates.manage", membership.organization_id)
+    if not application or application.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     application.status = ApplicationStatus.PROCESSING
     application.processing_error = None
     audit(db, user.id, "application.reanalysis_requested", "application", application.id)
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope({"id": application.id, "status": "processing"}, "Advanced analysis restarted")
 
 
@@ -684,7 +715,8 @@ def override_application_score(
     application = db.scalar(
         select(Application).options(joinedload(Application.job)).where(Application.id == application_id)
     )
-    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+    membership = ensure_membership(db, user) if user.role == Role.EMPLOYER else None
+    if not application or (user.role == Role.EMPLOYER and application.job.organization_id != membership.organization_id):
         raise HTTPException(404, "Application not found")
     previous = application.override_score if application.override_score is not None else application.final_score
     application.override_score = payload.score
@@ -704,7 +736,8 @@ def application_override_history(
     db: Session = Depends(get_db),
 ):
     application = db.scalar(select(Application).options(joinedload(Application.job)).where(Application.id == application_id))
-    if not application or (user.role == Role.EMPLOYER and application.job.employer_id != user.id):
+    membership = ensure_membership(db, user) if user.role == Role.EMPLOYER else None
+    if not application or (user.role == Role.EMPLOYER and application.job.organization_id != membership.organization_id):
         raise HTTPException(404, "Application not found")
     history = db.scalars(select(ScoreOverride).where(ScoreOverride.application_id == application_id).order_by(ScoreOverride.created_at.desc())).all()
     return envelope([{"id": item.id, "previous_score": item.previous_score, "override_score": item.override_score, "reason": item.reason, "actor_id": item.actor_id, "created_at": item.created_at.isoformat()} for item in history])
@@ -714,8 +747,9 @@ def application_override_history(
 def employer_dashboard(
     user: User = Depends(require_roles(Role.EMPLOYER)), db: Session = Depends(get_db)
 ):
+    membership = ensure_membership(db, user)
     jobs = db.scalars(
-        select(Job).where(Job.employer_id == user.id, Job.status != JobStatus.DELETED)
+        select(Job).where(Job.organization_id == membership.organization_id, Job.status != JobStatus.DELETED)
     ).all()
     job_ids = [job.id for job in jobs]
     apps = (
@@ -948,13 +982,13 @@ def admin_download_resume(
     if not application:
         raise HTTPException(404, "Application not found")
     try:
-        content = read_resume(application.resume.storage_key, settings)
-    except StorageError as exc:
+        resume_path = resume_storage.path(application.resume.storage_key)
+    except FileNotFoundError as exc:
         raise HTTPException(404, "Resume file not found") from exc
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
     return Response(
-        content,
+        resume_path.read_bytes(),
         media_type=application.resume.mime_type,
         headers={
             "Content-Disposition": (
@@ -982,7 +1016,9 @@ def admin_retry_application_ai(
     application.ai_error = None
     audit(db, admin.id, "admin.ai_analysis_restarted", "application", application.id)
     db.commit()
-    background.add_task(process_application, application.id, True)
+    queued = queue_application_analysis(db, application.id, application.organization_id, True)
+    db.commit()
+    dispatch_background(background, queued.id)
     return envelope(
         {"id": application.id, "ai_status": "processing"},
         "Gemini analysis restarted",

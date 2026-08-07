@@ -45,7 +45,7 @@ export function AdminLogin(){
   }
   return <div className="admin-login-page">
     <section className="admin-login-intro">
-      <div className="admin-brand large"><span><ShieldCheck/></span><div><strong>SmartHire</strong><small>CONTROL CENTER</small></div></div>
+      <Link className="admin-brand large" to="/" aria-label="SmartHire home"><span><ShieldCheck/></span><div><strong>SmartHire</strong><small>CONTROL CENTER</small></div></Link>
       <div><span className="admin-kicker">SECURE OPERATIONS PORTAL</span><h1>Platform control.<br/>Clear oversight.</h1><p>A dedicated workspace for identity governance, job moderation, system health, and recruitment intelligence operations.</p><div className="admin-security-note"><LockKeyhole/><div><strong>Restricted system</strong><small>Access is audited and limited to authorized administrators.</small></div></div></div>
       <small>SmartHire Platform Operations · Local Environment</small>
     </section>

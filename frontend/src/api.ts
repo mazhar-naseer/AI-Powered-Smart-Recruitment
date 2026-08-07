@@ -1,4 +1,5 @@
 const BASE=import.meta.env.VITE_API_URL||'/api/v1';
+export const API_BASE=BASE;
 type Options=RequestInit&{auth?:boolean};
 let accessToken=localStorage.getItem('access_token');
 export const tokenStore={get:()=>accessToken,set:(access:string,refresh:string)=>{accessToken=access;localStorage.setItem('access_token',access);localStorage.setItem('refresh_token',refresh)},clear:()=>{accessToken=null;localStorage.removeItem('access_token');localStorage.removeItem('refresh_token')}};

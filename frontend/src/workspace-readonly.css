@@ -1,0 +1,7 @@
+.workspace-readonly .pipeline-actions a[href="/employer/pipeline/settings"],
+.workspace-readonly .candidate-card>select,
+.workspace-readonly .candidate-controls,
+.workspace-readonly .note-form,
+.workspace-readonly .pipeline-settings-grid{display:none}
+.workspace-readonly .candidate-profile-card .button{display:none}
+.workspace-readonly .pipeline-board:before{content:"Read-only workspace: candidate and pipeline changes require recruiter access.";display:block;position:sticky;left:0;min-width:320px;padding:12px 14px;border:1px solid #d8e1ef;border-radius:10px;background:#f7f9fd;color:#64718a;font-weight:700}
