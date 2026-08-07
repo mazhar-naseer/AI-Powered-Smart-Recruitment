@@ -1,6 +1,6 @@
 import {createContext,useContext,useEffect,useState,type ReactNode} from 'react';
 import {request,tokenStore} from './api'; import type{User}from'./types';
-type Registration=User&{dev_verification_code?:string;verification_required:boolean};
+type Registration=User&{dev_verification_code?:string;verification_required:boolean;verification_email_sent?:boolean};
 type AuthData={access_token:string;refresh_token:string;user:User};
 type Auth={user:User|null;loading:boolean;login:(e:string,p:string)=>Promise<User>;register:(v:Record<string,string>)=>Promise<Registration>;verifyEmail:(v:{email?:string;code?:string;token?:string})=>Promise<User>;logout:()=>Promise<void>};
 const Context=createContext<Auth|null>(null);

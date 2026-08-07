@@ -50,7 +50,11 @@ from app.schemas import (
     UserStatusUpdate,
     VerifyEmailRequest,
 )
-from app.email_service import consume_verification, issue_email_verification
+from app.email_service import (
+    consume_verification,
+    email_provider_configured,
+    issue_email_verification,
+)
 from app.security import (
     create_token,
     current_user,
@@ -134,10 +138,22 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
         role=payload.role,
         company_name=payload.company_name,
-        email_verified=False,
+        email_verified=not settings.email_verification_enabled,
     )
     db.add(user)
     db.flush()
+    # With verification off no code is issued at all, so there is nothing to
+    # send and nothing to consume: the account is active and login is the next
+    # step. Keep the response keys stable so clients need no branching.
+    if not settings.email_verification_enabled:
+        audit(db, user.id, "auth.register", "user", user.id)
+        db.commit()
+        db.refresh(user)
+        data = UserOut.model_validate(user).model_dump(mode="json")
+        data["verification_required"] = False
+        data["verification_email_sent"] = False
+        return envelope(data, "Account created. You can log in now.")
+
     _, dev_code, delivered = issue_email_verification(db, user)
     audit(db, user.id, "auth.register", "user", user.id)
     db.commit()
@@ -145,7 +161,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     data = UserOut.model_validate(user).model_dump(mode="json")
     data["verification_required"] = True
     data["verification_email_sent"] = delivered
-    if settings.environment == "development" and not settings.smtp_host:
+    if settings.environment == "development" and not email_provider_configured():
         data["dev_verification_code"] = dev_code
     return envelope(
         data,
@@ -170,12 +186,14 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 @router.post("/auth/resend-verification")
 def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
+    if not settings.email_verification_enabled:
+        raise HTTPException(400, "Email verification is disabled. Log in with your password.")
     user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
     dev_code = None
     if user and not user.email_verified:
         _, dev_code, _ = issue_email_verification(db, user)
         db.commit()
-    data = {"dev_verification_code": dev_code} if settings.environment == "development" and not settings.smtp_host and dev_code else None
+    data = {"dev_verification_code": dev_code} if settings.environment == "development" and not email_provider_configured() and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")
 
 
@@ -199,7 +217,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(401, "Invalid email or password")
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(403, "Account is not active")
-    if not user.email_verified:
+    # Accounts that registered while verification was on would otherwise be
+    # stranded once it is turned off: no code can be issued to clear the flag.
+    if settings.email_verification_enabled and not user.email_verified:
         raise HTTPException(403, "Email verification required")
     user.last_login_at = datetime.now(UTC)
     auth = issue_tokens(user, db)
