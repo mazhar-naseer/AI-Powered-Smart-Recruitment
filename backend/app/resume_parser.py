@@ -4,7 +4,10 @@ from pathlib import Path
 from docx import Document
 from pypdf import PdfReader
 
+from app.logging_config import get_logger
 from app.skill_ontology import canonical_skill, find_skill_evidence
+
+logger = get_logger(__name__)
 
 PARSER_VERSION = "structured-parser-v1"
 
@@ -17,6 +20,12 @@ def _pdf_text(path: Path) -> tuple[str, bool]:
     text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
     if len(text.strip()) >= 80:
         return text, False
+    # Too little text to be a real resume, so the PDF is probably a scan. OCR is
+    # the fallback, and it is optional: the imports below are absent on hosts
+    # without Tesseract installed.
+    logger.info(
+        "PDF %s yielded only %d characters, attempting OCR", path.name, len(text.strip())
+    )
     try:
         import fitz
         import pytesseract
@@ -29,8 +38,20 @@ def _pdf_text(path: Path) -> tuple[str, bool]:
             image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
             pages.append(pytesseract.image_to_string(image))
         ocr_text = "\n".join(pages)
-        return ocr_text if len(ocr_text.strip()) > len(text.strip()) else text, True
+        if len(ocr_text.strip()) > len(text.strip()):
+            logger.info("OCR recovered %d characters from %s", len(ocr_text.strip()), path.name)
+            return ocr_text, True
+        logger.info("OCR of %s produced no more text than the PDF layer", path.name)
+        return text, True
+    except ImportError:
+        # An expected deployment state, not a fault: OCR extras are optional.
+        logger.info("OCR unavailable (fitz/pytesseract not installed), using PDF text only")
+        return text, False
     except Exception:
+        # A corrupt scan or a missing Tesseract binary. The caller still gets the
+        # PDF-layer text and decides whether it is enough, but without this the
+        # reason for a thin extraction was invisible.
+        logger.warning("OCR failed for %s, using PDF text only", path.name, exc_info=True)
         return text, False
 
 

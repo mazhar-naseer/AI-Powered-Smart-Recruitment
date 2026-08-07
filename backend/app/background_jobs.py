@@ -93,5 +93,13 @@ def run_next_queued_job() -> bool:
         return False
     finally:
         db.close()
-    run_background_job(job_id)
+    try:
+        run_background_job(job_id)
+    except Exception:
+        # run_background_job handles its own failures, but the recovery path in its
+        # except block commits, and that commit can fail too — on a dropped
+        # connection, for instance. Without this the worker process would exit and
+        # every later job would stop, so the guarantee in the docstring above has
+        # to be enforced here rather than assumed.
+        logger.exception("Job %s escaped its own error handling", job_id)
     return True

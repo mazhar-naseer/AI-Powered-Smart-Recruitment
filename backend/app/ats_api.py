@@ -138,14 +138,18 @@ def remove_member(membership_id: str, user: User = Depends(require_roles(Role.EM
     target = db.get(OrganizationMembership, membership_id)
     if not target or target.organization_id != current.organization_id or target.role == MembershipRole.OWNER:
         raise HTTPException(404, "Team member not found or protected")
-    target.status = "removed";db.add(AuditLog(actor_id=user.id, action="team.member_removed", target_type="membership", target_id=target.id));db.commit();return envelope(message="Team member removed")
+    target.status = "removed";db.add(AuditLog(actor_id=user.id, action="team.member_removed", target_type="membership", target_id=target.id));db.commit()
+    logger.info("User %s removed member %s from workspace %s", user.id, target.user_id, current.organization_id)
+    return envelope(message="Team member removed")
 
 
 @router.delete("/workspace/team/invitations/{invitation_id}")
 def revoke_invitation(invitation_id:str,user:User=Depends(require_roles(Role.EMPLOYER)),db:Session=Depends(get_db)):
     current=ensure_membership(db,user);require_permission(db,user,"team.manage",current.organization_id);invitation=db.get(OrganizationInvitation,invitation_id)
     if not invitation or invitation.organization_id!=current.organization_id or invitation.accepted_at:raise HTTPException(404,"Pending invitation not found")
-    db.delete(invitation);db.add(AuditLog(actor_id=user.id,action="team.invitation_revoked",target_type="organization",target_id=current.organization_id));db.commit();return envelope(message="Invitation revoked")
+    db.delete(invitation);db.add(AuditLog(actor_id=user.id,action="team.invitation_revoked",target_type="organization",target_id=current.organization_id));db.commit()
+    logger.info("User %s revoked invitation %s in workspace %s", user.id, invitation_id, current.organization_id)
+    return envelope(message="Invitation revoked")
 
 
 @router.get("/workspace/pipeline/stages")
@@ -175,7 +179,12 @@ def delete_stage(stage_id:str,user:User=Depends(require_roles(Role.EMPLOYER)),db
     membership=ensure_membership(db,user);require_permission(db,user,"organization.manage",membership.organization_id);stage=db.get(PipelineStage,stage_id)
     if not stage or stage.organization_id!=membership.organization_id or stage.is_default:raise HTTPException(404,"Pipeline stage not found or protected")
     if db.scalar(select(func.count(Application.id)).where(Application.stage_id==stage.id)):raise HTTPException(409,"Move candidates out of this stage before deleting it")
-    db.delete(stage);db.commit();return envelope(message="Pipeline stage deleted")
+    # Read the name before the delete: after the commit the instance is expired
+    # and touching a column would re-query a row that is gone.
+    stage_name = stage.name
+    db.delete(stage);db.commit()
+    logger.info("User %s deleted pipeline stage %s (%s) in workspace %s", user.id, stage_id, stage_name, membership.organization_id)
+    return envelope(message="Pipeline stage deleted")
 
 
 @router.get("/workspace/candidates")

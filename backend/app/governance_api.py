@@ -28,6 +28,18 @@ def envelope(data=None, message="Success"):
 
 def record(db: Session, admin: User, action: str, target_type: str, target_id: str, metadata: dict | None = None):
     db.add(AuditLog(actor_id=admin.id, action=action, target_type=target_type, target_id=target_id, metadata_json=metadata or {}))
+    # Every mutating endpoint in this router calls record(), so logging here covers
+    # all of them from one place. These are platform-privilege changes: the audit
+    # table is authoritative, but a log line survives a rolled-back transaction
+    # and reaches log aggregation, which the table does not.
+    logger.info(
+        "Admin %s performed %s on %s %s%s",
+        admin.id,
+        action,
+        target_type,
+        target_id,
+        f" ({metadata})" if metadata else "",
+    )
 
 
 class PlatformRoleChange(BaseModel):

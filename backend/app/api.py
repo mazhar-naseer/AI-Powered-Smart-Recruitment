@@ -137,6 +137,9 @@ def audit(
         actor_user = db.get(User, actor)
         organization_id = actor_user.active_organization_id if actor_user else None
     db.add(AuditLog(actor_id=actor, action=action, target_type=target_type, target_id=target_id, metadata_json={"organization_id": organization_id} if organization_id else {}))
+    # Debug, not info: the endpoints that matter already log their own outcome in
+    # domain terms, and every audited action would otherwise appear twice.
+    logger.debug("Audit: %s by %s on %s %s", action, actor, target_type, target_id)
 
 
 @router.post("/auth/register", status_code=201)   
@@ -922,6 +925,9 @@ def create_administrator(
     audit(db, admin.id, "admin.user_created", "user", created.id)
     db.commit()
     db.refresh(created)
+    # Privilege escalation is the event most worth being able to reconstruct
+    # later, so both the new and the granting administrator are named.
+    logger.warning("Admin %s created a new administrator account %s", admin.id, created.id)
     return envelope(
         UserOut.model_validate(created).model_dump(mode="json"),
         "Administrator created successfully",
@@ -1101,6 +1107,11 @@ def admin_retry_application_ai(
     if application.status != ApplicationStatus.COMPLETED:
         raise HTTPException(409, "Resume processing must complete before AI can be retried")
     if not settings.gemini_enabled or not settings.gemini_api_key:
+        logger.warning(
+            "Admin %s asked to retry AI for application %s but Gemini is not configured",
+            admin.id,
+            application_id,
+        )
         raise HTTPException(503, "Gemini analysis is not configured")
     application.ai_status = "processing"
     application.ai_error = None
