@@ -5,9 +5,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.logging_config import get_logger
 from app.models import MembershipRole, Organization, OrganizationMembership, PipelineStage, User
 from app.saas import ensure_subscription
-from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 

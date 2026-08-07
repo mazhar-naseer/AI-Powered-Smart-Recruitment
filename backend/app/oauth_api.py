@@ -206,7 +206,7 @@ def exchange(payload: OAuthExchange, db: Session = Depends(get_db)):
         OAuthLoginCode.expires_at > now,
     ))
     if not login_code:
-        logger.warning("Google login code exchange rejected: code is invalid, expired, or already used")
+        logger.warning("Google login code rejected: invalid, expired, or already used")
         raise HTTPException(400, "Google login code is invalid, expired, or already used")
     user = db.get(User, login_code.user_id)
     if not user or user.status != UserStatus.ACTIVE:

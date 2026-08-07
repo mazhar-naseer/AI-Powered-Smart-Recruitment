@@ -5,10 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import SessionLocal
+from app.logging_config import get_logger
 from app.models import BackgroundJob, BackgroundJobStatus
 from app.resume_processing import process_application
-from app.logging_config import get_logger
-
 
 logger = get_logger(__name__)
 

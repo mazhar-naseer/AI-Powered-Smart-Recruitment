@@ -57,7 +57,9 @@ def analyze_with_gemini(resume: str, job: str, skills: list[str], profile: dict 
         # Never log `url` or the exception's own repr for an HTTPError: the API
         # key is a query parameter and would end up in the log verbatim.
         logger.warning(
-            "Gemini request failed after %.2fs: %s", time.perf_counter() - started, type(exc).__name__
+            "Gemini request failed after %.2fs: %s",
+            time.perf_counter() - started,
+            type(exc).__name__,
         )
         raise
     try:

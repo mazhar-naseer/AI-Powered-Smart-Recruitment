@@ -587,7 +587,9 @@ async def apply(
                 job_id,
             )
             raise HTTPException(409, "You have already applied to this job") from exc
-        logger.exception("Application creation failed due to database integrity constraint %s", constraint)
+        logger.exception(
+            "Application creation failed due to database integrity constraint %s", constraint
+        )
         raise HTTPException(500, "Application could not be created. Please try again.") from exc
     db.refresh(application)
     queued = queue_application_analysis(db, application.id, job.organization_id)

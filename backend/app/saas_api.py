@@ -174,7 +174,10 @@ async def billing_webhook(provider: str, request: Request, x_smarthire_billing_s
         logger.warning("Billing webhook from %s carried a signed but unparsable body", provider)
         raise HTTPException(400, "Billing webhook body is not valid JSON") from None
     if not isinstance(payload, dict):
-        logger.warning("Billing webhook from %s sent a %s where an object was expected", provider, type(payload).__name__)
+        logger.warning(
+            "Billing webhook from %s sent a %s where an object was expected",
+            provider, type(payload).__name__,
+        )
         raise HTTPException(422, "Billing event must be a JSON object")
     event_id = str(payload.get("id", ""))
     event_type = str(payload.get("type", ""))
@@ -182,7 +185,7 @@ async def billing_webhook(provider: str, request: Request, x_smarthire_billing_s
         logger.warning("Billing webhook from %s is missing an event id or type", provider)
         raise HTTPException(422, "Billing event id and type are required")
     if db.scalar(select(BillingEvent).where(BillingEvent.provider_event_id == event_id)):
-        logger.info("Billing event %s from %s already processed, ignoring replay", event_id, provider)
+        logger.info("Billing event %s from %s already processed, ignoring", event_id, provider)
         return envelope(message="Billing event already processed")
     db.add(BillingEvent(provider=provider, provider_event_id=event_id, event_type=event_type, payload=payload))
     data = payload.get("data", {})

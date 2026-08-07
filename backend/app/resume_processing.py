@@ -132,7 +132,7 @@ def process_application(application_id: str, force: bool = False) -> None:
         application.processing_error = None
         db.commit()
         logger.info(
-            "Analyzed application %s in %.2fs: final=%s deterministic=%s ai_status=%s matched=%d/%d",
+            "Analyzed application %s in %.2fs: final=%s deterministic=%s ai=%s matched=%d/%d",
             application_id,
             time.perf_counter() - started,
             application.final_score,

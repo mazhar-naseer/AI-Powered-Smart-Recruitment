@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Role, User, UserStatus
 from app.logging_config import get_logger
+from app.models import Role, User, UserStatus
 
 settings = get_settings()
 logger = get_logger(__name__)
