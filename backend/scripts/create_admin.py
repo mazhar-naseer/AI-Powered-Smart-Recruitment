@@ -18,6 +18,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--email", required=True)
     parser.add_argument("--password", required=True)
+    # parser.add_argument("--name", default="System Admin")
     parser.add_argument("--name", default="System Admin")
     args = parser.parse_args()
     Base.metadata.create_all(engine)
