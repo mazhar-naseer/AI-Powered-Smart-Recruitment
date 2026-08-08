@@ -22,5 +22,9 @@ export async function request<T>(path:string,options:Options={}):Promise<T>{
     if(refresh.ok){const body=await refresh.json();tokenStore.set(body.data.access_token,body.data.refresh_token);headers.set('Authorization',`Bearer ${body.data.access_token}`);response=await fetch(`${BASE}${path}`,{...options,headers});}else tokenStore.clear();
   }
   const contentType=response.headers.get('content-type')||''; const body=contentType.includes('json')?await response.json():await response.blob();
-  if(!response.ok)throw new Error(errorMessage(body)); return body.data as T;
+  if(!response.ok)throw new Error(errorMessage(body));
+  // A binary route — resume, avatar, export — answers with the file itself and
+  // has no envelope to unwrap. Reaching for `.data` on a Blob yields undefined,
+  // so the caller would get nothing back and no error explaining why.
+  return (body instanceof Blob?body:body.data) as T;
 }
