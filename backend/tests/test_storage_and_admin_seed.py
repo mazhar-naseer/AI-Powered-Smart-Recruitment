@@ -155,6 +155,47 @@ def test_local_keys_are_rejected_in_strict_cloudinary_mode(resource_type, tmp_pa
     assert stray.exists()
 
 
+def test_read_uses_the_signed_download_api_not_the_cdn(monkeypatch):
+    """Delivery URLs 401 on authenticated raw assets; the download API does not."""
+    storage = CloudinaryPrivateStorage("smarthire/resumes", "raw", cloudinary_settings())
+    key = f"{CLOUDINARY_PREFIX}smarthire/resumes/{uuid.uuid4().hex}.pdf"
+
+    url = storage._download_url(key)
+    assert url.startswith("https://api.cloudinary.com/")
+    assert "/raw/download?" in url
+    assert "signature=" in url and "api_key=" in url
+    # res.cloudinary.com is the delivery host that rejected these in production.
+    assert "res.cloudinary.com" not in url
+
+
+def test_avatar_download_url_passes_the_format_separately():
+    """Cloudinary strips an image's extension, so it must be sent as `format`."""
+    storage = CloudinaryPrivateStorage("smarthire/avatars", "image", cloudinary_settings())
+    url = storage._download_url(f"{CLOUDINARY_PREFIX}smarthire/avatars/abc.png")
+    assert "/image/download?" in url
+    assert "format=png" in url
+
+
+@pytest.mark.parametrize(("status", "missing"), [(404, True), (401, False), (500, False)])
+def test_download_http_errors_map_to_the_right_exception(monkeypatch, status, missing):
+    """A 401 must not be reported as a missing file — that was the prod symptom."""
+    from urllib.error import HTTPError
+
+    import app.object_storage as module
+
+    storage = CloudinaryPrivateStorage("smarthire/resumes", "raw", cloudinary_settings())
+
+    def fail(url, timeout=None):
+        raise HTTPError(url, status, "boom", {}, None)
+
+    monkeypatch.setattr(module, "urlopen", fail)
+    with pytest.raises(OSError) as exc:  # noqa: PT011 - narrowed by the assert below
+        storage.read(f"{CLOUDINARY_PREFIX}smarthire/resumes/{uuid.uuid4().hex}.pdf")
+    # FileNotFoundError subclasses OSError, so the branch has to be asserted
+    # explicitly or a 401 regressing to a 404 would still pass.
+    assert isinstance(exc.value, FileNotFoundError) is missing
+
+
 def test_open_yields_a_real_path_for_the_parser(monkeypatch):
     """The parser needs a file; a remote object is downloaded to a temp path."""
     storage = CloudinaryPrivateStorage("smarthire/resumes", "raw", cloudinary_settings())

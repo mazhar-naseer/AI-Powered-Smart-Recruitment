@@ -33,6 +33,7 @@ from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from app.config import Settings, get_settings
@@ -167,22 +168,42 @@ class CloudinaryPrivateStorage:
         logger.debug("Stored object %s (%d bytes)", key, len(content))
         return key
 
-    def read(self, key: str) -> bytes:
+    def _download_url(self, key: str) -> str:
+        """Sign a URL for the original bytes via the API, not the CDN.
+
+        Delivery URLs for authenticated assets are subject to per-account
+        delivery rules, which reject raw PDFs with a 401 on most plans. The
+        download endpoint is signed with the API secret and is not.
+        """
         public_id = self._public_id(key)
         cloudinary = self._configure()
-        url, _options = cloudinary.utils.cloudinary_url(
-            public_id,
-            resource_type=self.resource_type,
-            type="authenticated",
-            sign_url=True,
-            secure=True,
+        # raw carries its extension in the public_id; image had it stripped, so
+        # the format has to be handed over separately.
+        fmt = Path(key).suffix.lstrip(".") if self.resource_type == "image" else None
+        return cloudinary.utils.private_download_url(
+            public_id, fmt, resource_type=self.resource_type, type="authenticated"
         )
+
+    def read(self, key: str) -> bytes:
+        public_id = self._public_id(key)
+        url = self._download_url(key)
         try:
             with urlopen(url, timeout=30) as response:  # noqa: S310 - signed Cloudinary URL
                 return response.read()
+        except HTTPError as exc:
+            if exc.code == 404:
+                logger.warning("Cloudinary object does not exist: %s", public_id)
+                raise FileNotFoundError(key) from exc
+            # Anything else is the store refusing or failing, not a missing
+            # object. Reporting it as absent sends a 404 for a resume that is
+            # sitting in the account, which is what made the 401 hard to read.
+            logger.error(
+                "Cloudinary refused to serve %s: HTTP %d %s", public_id, exc.code, exc.reason
+            )
+            raise OSError(f"Cloudinary download failed with HTTP {exc.code}") from exc
         except Exception as exc:
-            logger.warning("Cloudinary object could not be retrieved: %s", public_id)
-            raise FileNotFoundError(key) from exc
+            logger.exception("Cloudinary object could not be retrieved: %s", public_id)
+            raise OSError(f"Cloudinary download failed: {exc}") from exc
 
     @contextmanager
     def open(self, key: str) -> Iterator[Path]:

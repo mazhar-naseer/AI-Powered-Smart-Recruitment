@@ -415,6 +415,10 @@ def profile_avatar(user: User = Depends(current_user)):
         # the store have drifted apart. Storage logged the key.
         logger.warning("User %s has an avatar row with no file behind it", user.id)
         raise HTTPException(404, "Profile photo not found") from None
+    except OSError:
+        # The object exists as far as the record knows; the store would not hand
+        # it over. Storage logged the cause.
+        raise HTTPException(503, "Profile photo is temporarily unavailable") from None
     mime = avatar_media_type(user.avatar_path)
     return Response(content, media_type=mime)
 
@@ -799,6 +803,8 @@ def download_resume(
     except FileNotFoundError as exc:
         logger.warning("Resume for application %s is missing from storage", app.id)
         raise HTTPException(404, "Resume file not found") from exc
+    except OSError as exc:
+        raise HTTPException(503, "Resume is temporarily unavailable") from exc
     audit(db, user.id, "resume.downloaded", "application", app.id)
     db.commit()
     # A recruiter reading a candidate's document is a privacy-relevant event, so
@@ -1134,6 +1140,8 @@ def admin_download_resume(
     except FileNotFoundError as exc:
         logger.warning("Resume for application %s is missing from storage", application.id)
         raise HTTPException(404, "Resume file not found") from exc
+    except OSError as exc:
+        raise HTTPException(503, "Resume is temporarily unavailable") from exc
     audit(db, admin.id, "admin.resume_downloaded", "application", application.id)
     db.commit()
     # An administrator can reach any workspace's documents, so this crosses a
