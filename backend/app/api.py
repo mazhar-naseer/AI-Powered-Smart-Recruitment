@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import math
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -36,18 +37,22 @@ from app.models import (
     User,
     UserStatus,
     PipelineStage,
+    PasswordReset,
     Notification,
     OrganizationMembership,
 )
 from app.resume_processing import process_application
 from app.schemas import (
     AdminCreate,
+    AdminBootstrapRequest,
     AuthOut,
     JobCreate,
     JobOut,
     JobUpdate,
     LoginRequest,
     ProfileUpdate,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     RegisterRequest,
     ResendVerificationRequest,
     ScoreOverrideRequest,
@@ -55,7 +60,7 @@ from app.schemas import (
     UserStatusUpdate,
     VerifyEmailRequest,
 )
-from app.email_service import consume_verification, issue_email_verification
+from app.email_service import consume_verification, issue_email_verification, issue_password_reset
 from app.security import (
     create_token,
     current_user,
@@ -185,6 +190,49 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
         db.commit()
     data = {"dev_verification_code": dev_code} if settings.environment == "development" and not settings.smtp_host and dev_code else None
     return envelope(data, "If an unverified account exists, a new email has been sent")
+
+
+@router.post("/auth/forgot-password")
+def forgot_password(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.email == str(payload.email).lower().strip()))
+    if user and user.status == UserStatus.ACTIVE:
+        issue_password_reset(db, user)
+        audit(db, user.id, "auth.password_reset_requested", "user", user.id)
+        db.commit()
+    return envelope(message="If an active account uses this email, a password reset link has been sent")
+
+
+@router.post("/auth/reset-password")
+def reset_password(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
+    reset = db.scalar(select(PasswordReset).where(PasswordReset.token_hash == hashlib.sha256(payload.token.encode()).hexdigest(), PasswordReset.consumed_at.is_(None)).order_by(PasswordReset.created_at.desc()))
+    if not reset or reset.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+        raise HTTPException(400, "Password reset link is invalid or expired")
+    user = db.get(User, reset.user_id)
+    if not user or user.status != UserStatus.ACTIVE:
+        raise HTTPException(400, "Password reset link is invalid or expired")
+    user.password_hash = hash_password(payload.password)
+    reset.consumed_at = datetime.now(UTC)
+    db.query(RefreshSession).filter(RefreshSession.user_id == user.id, RefreshSession.revoked_at.is_(None)).update({RefreshSession.revoked_at: datetime.now(UTC)})
+    audit(db, user.id, "auth.password_reset_completed", "user", user.id)
+    db.commit()
+    return envelope(message="Password reset successfully. You can now sign in.")
+
+
+@router.post("/admin/bootstrap", status_code=201)
+def bootstrap_admin(payload: AdminBootstrapRequest, db: Session = Depends(get_db)):
+    if db.scalar(select(User.id).where(User.role == Role.ADMIN).limit(1)):
+        raise HTTPException(409, "An administrator already exists. Sign in to the Control Center to manage administrators.")
+    configured_token = settings.admin_bootstrap_token
+    if not configured_token or not secrets.compare_digest(payload.bootstrap_token, configured_token):
+        raise HTTPException(403, "The bootstrap token is invalid")
+    email = str(payload.email).lower().strip()
+    if db.scalar(select(User.id).where(User.email == email)):
+        raise HTTPException(409, "An account with this email already exists")
+    user = User(email=email, full_name=payload.full_name.strip(), password_hash=hash_password(payload.password), role=Role.ADMIN, email_verified=True, status=UserStatus.ACTIVE)
+    db.add(user); db.flush()
+    audit(db, user.id, "admin.bootstrap_created", "user", user.id)
+    db.commit()
+    return envelope(UserOut.model_validate(user).model_dump(mode="json"), "First administrator created. Sign in to the Control Center.")
 
 
 def issue_tokens(user: User, db: Session) -> AuthOut:
@@ -831,8 +879,10 @@ def set_status(
     db: Session = Depends(get_db),
 ):
     target = db.get(User, user_id)
-    if not target or target.role == Role.ADMIN:
+    if not target:
         raise HTTPException(404, "User not found")
+    if target.role == Role.ADMIN:
+        raise HTTPException(403, "Administrator accounts, including your own, cannot be suspended, activated, or role-changed through user management")
     if payload.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
         raise HTTPException(422, "Use delete endpoint for deletion")
     target.status = payload.status

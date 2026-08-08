@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     smtp_from_email: str = "no-reply@smarthire.local"
     smtp_use_tls: bool = True
     email_verification_minutes: int = 30
+    password_reset_minutes: int = 30
+    admin_bootstrap_token: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
     gemini_enabled: bool = True

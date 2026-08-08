@@ -55,6 +55,7 @@ export function AdminLogin(){
       <label>Administrator email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" placeholder="admin@company.com" required/></label>
       <label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" minLength={8} required/></label>
       <button className="admin-login-button" disabled={busy}>{busy?'Verifying access…':'Enter Control Center'}<ArrowRight size={17}/></button>
+      <Link className="admin-back" to="/forgot-password?portal=admin">Forgot administrator password?</Link>
       <Link className="admin-back" to="/login">← Return to SmartHire application</Link>
     </form>
   </div>
