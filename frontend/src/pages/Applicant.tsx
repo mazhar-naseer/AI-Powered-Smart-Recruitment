@@ -1,6 +1,18 @@
 import{Fragment,useEffect,useState,type FormEvent}from'react';import{Link,useParams}from'react-router-dom';import{BriefcaseBusiness,CheckCircle2,ChevronDown,ChevronUp,MapPin,Search,UploadCloud}from'lucide-react';import{request}from'../api';import{Badge,Empty,Spinner}from'../components';import type{Application,Job}from'../types';
 function JobCard({job}:{job:Job}){return <article className="job-card"><div className="job-icon"><BriefcaseBusiness/></div><div className="job-main"><h3>{job.title}</h3><p>{job.employer.company_name||job.employer.full_name}</p><span><MapPin size={13}/>{job.location||'Remote / flexible'}</span><div className="chips">{job.required_skills.slice(0,5).map(skill=><Badge key={skill} tone="blue">{skill}</Badge>)}</div></div><div className="job-action"><Badge>{job.status}</Badge><small>Posted {new Date(job.created_at).toLocaleDateString()}</small><Link className="button small" to={`/applicant/jobs/${job.id}`}>View Details</Link></div></article>}
 export function ApplicantJobs(){const[jobs,setJobs]=useState<Job[]>();const[q,setQ]=useState('');async function load(search=''){const data=await request<any>(`/jobs?q=${encodeURIComponent(search)}`);setJobs(data.items)}useEffect(()=>{load()},[]);return <><div className="page-title"><div><h1>Job Board</h1><p>Find the right opportunity for your career.</p></div></div><form className="searchbar" onSubmit={e=>{e.preventDefault();load(q)}}><Search/><input aria-label="Search jobs" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search jobs by title, skills or company…"/><button className="button">Search</button></form><section className="panel jobs">{!jobs?<Spinner/>:jobs.length?jobs.map(job=><JobCard key={job.id} job={job}/>):<Empty title="No matching jobs" body="Try a broader search or check back later."/>}</section></>}
+// Elapsed milliseconds at which each step becomes the current one. `request`
+// submits over fetch, so there are no byte-level progress events to bind to —
+// and byte progress would mislead anyway: the upload is a small slice of the
+// wait, and the tail is the server storing the file and mailing the employer.
+// The bar is therefore indeterminate and these are timed against the observed
+// shape of the route rather than reporting a percentage nobody can measure.
+const UPLOAD_STEPS=[
+  {at:0,label:'Uploading your resume'},
+  {at:2000,label:'Storing it securely'},
+  {at:5000,label:'Creating your application'},
+  {at:9000,label:'Starting the match analysis'},
+] as const;
 export function JobDetails(){
   const{id}=useParams();
   const[job,setJob]=useState<Job>();
@@ -9,11 +21,20 @@ export function JobDetails(){
   const[error,setError]=useState('');
   const[busy,setBusy]=useState(false);
   const[justSubmitted,setJustSubmitted]=useState(false);
+  const[phase,setPhase]=useState(0);
   useEffect(()=>{
     Promise.all([request<Job>(`/jobs/${id}`),request<Application[]>('/applicant/applications')])
       .then(([jobData,applications])=>{setJob(jobData);setExisting(applications.find(application=>application.job_id===id)||null)})
       .catch(err=>setError(err instanceof Error?err.message:'Could not load job details'))
   },[id]);
+  useEffect(()=>{
+    // Timers only while the request is in flight; the last step has no timer of
+    // its own, so the indicator sits on it until the response lands instead of
+    // ever animating to a finished state the server has not reached.
+    if(!busy)return setPhase(0);
+    const timers=UPLOAD_STEPS.map((step,index)=>index&&window.setTimeout(()=>setPhase(index),step.at)).filter(Boolean) as number[];
+    return()=>timers.forEach(timer=>window.clearTimeout(timer))
+  },[busy]);
   async function apply(e:FormEvent){
     e.preventDefault();
     if(existing)return;
@@ -32,7 +53,7 @@ export function JobDetails(){
     }finally{setBusy(false)}
   }
   if(!job||existing===undefined)return <Spinner/>;
-  return <><div className="job-detail-head"><div className="job-icon"><BriefcaseBusiness/></div><div><h1>{job.title}</h1><p>{job.employer.company_name||job.employer.full_name}</p><span><MapPin size={14}/>{job.location||'Remote / flexible'} · {job.employment_type||'Full-time'}</span></div></div><div className="job-detail-grid"><section className="panel prose"><h2>Job Description</h2><p>{job.description}</p><h3>Required Skills</h3><div className="chips">{job.required_skills.map(s=><Badge key={s} tone="blue">{s}</Badge>)}</div><div className="job-facts"><div><span>Experience</span><strong>{job.experience_level||'Not specified'}</strong></div><div><span>Job Type</span><strong>{job.employment_type||'Full-time'}</strong></div><div><span>Salary</span><strong>{job.salary_min?`${job.salary_min} - ${job.salary_max||'Open'}`:'Not disclosed'}</strong></div></div></section>{existing?<section className={`panel applied-card ${justSubmitted?'new-submission':''}`}><div className="applied-check"><CheckCircle2/></div><Badge tone={existing.status==='completed'?'green':'orange'}>{existing.status}</Badge><h2>{justSubmitted?'Application submitted successfully':'Application already submitted'}</h2><p>{justSubmitted?`We received your resume for ${job.title}. SmartHire is now processing your match analysis.`:`You applied on ${new Date(existing.created_at).toLocaleDateString()}. Your resume is already attached to this specific job application.`}</p>{existing.final_score!=null&&<div className="applied-score"><span>Current match score</span><strong>{existing.final_score}%</strong></div>}<Link className="button full" to={`/applicant/applications?application=${existing.id}`}>Track this application</Link></section>:<form className="panel upload" onSubmit={apply}><h2>Apply for this job</h2><p>Upload Resume (PDF or DOCX)</p>{error&&<div className="alert error">{error}</div>}<label className="dropzone"><UploadCloud/><strong>Choose your PDF or DOCX resume</strong><small>Maximum file size: 5 MB</small><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={e=>setFile(e.target.files?.[0])}/>{file&&<b>{file.name}</b>}</label><button className="button full" disabled={busy}>{busy?'Submitting…':'Submit Application'}</button></form>}</div></>
+  return <><div className="job-detail-head"><div className="job-icon"><BriefcaseBusiness/></div><div><h1>{job.title}</h1><p>{job.employer.company_name||job.employer.full_name}</p><span><MapPin size={14}/>{job.location||'Remote / flexible'} · {job.employment_type||'Full-time'}</span></div></div><div className="job-detail-grid"><section className="panel prose"><h2>Job Description</h2><p>{job.description}</p><h3>Required Skills</h3><div className="chips">{job.required_skills.map(s=><Badge key={s} tone="blue">{s}</Badge>)}</div><div className="job-facts"><div><span>Experience</span><strong>{job.experience_level||'Not specified'}</strong></div><div><span>Job Type</span><strong>{job.employment_type||'Full-time'}</strong></div><div><span>Salary</span><strong>{job.salary_min?`${job.salary_min} - ${job.salary_max||'Open'}`:'Not disclosed'}</strong></div></div></section>{existing?<section className={`panel applied-card ${justSubmitted?'new-submission':''}`}><div className="applied-check"><CheckCircle2/></div><Badge tone={existing.status==='completed'?'green':'orange'}>{existing.status}</Badge><h2>{justSubmitted?'Application submitted successfully':'Application already submitted'}</h2><p>{justSubmitted?`We received your resume for ${job.title}. SmartHire is now processing your match analysis.`:`You applied on ${new Date(existing.created_at).toLocaleDateString()}. Your resume is already attached to this specific job application.`}</p>{existing.final_score!=null&&<div className="applied-score"><span>Current match score</span><strong>{existing.final_score}%</strong></div>}<Link className="button full" to={`/applicant/applications?application=${existing.id}`}>Track this application</Link></section>:<form className="panel upload" onSubmit={apply} aria-busy={busy}><h2>Apply for this job</h2><p>Upload Resume (PDF or DOCX)</p>{error&&<div className="alert error">{error}</div>}{busy?<div className="uploading"><div className="uploading-icon"><UploadCloud/></div><strong>{file?.name}</strong><div className="uploading-bar" role="progressbar" aria-label="Submitting application"><i/></div><p className="uploading-status" role="status">{UPLOAD_STEPS[phase].label}…</p><div className="uploading-dots" aria-hidden="true">{UPLOAD_STEPS.map((step,index)=><i key={step.label} className={index<phase?'done':index===phase?'now':''}/>)}</div><small>This usually takes under a minute. Please keep this page open.</small></div>:<label className="dropzone"><UploadCloud/><strong>Choose your PDF or DOCX resume</strong><small>Maximum file size: 5 MB</small><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={e=>setFile(e.target.files?.[0])}/>{file&&<b>{file.name}</b>}</label>}<button className="button full" disabled={busy}>{busy?<><span className="button-spinner" aria-hidden="true"/>Submitting…</>:'Submit Application'}</button></form>}</div></>
 }
 
 const KPI=[
