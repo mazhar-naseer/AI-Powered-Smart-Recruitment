@@ -42,7 +42,7 @@ async def lifespan(_app: FastAPI):
     logger.info("Starting %s in %s environment", settings.app_name, settings.environment)
     # Storage roots are created by the local backend when it is the one selected;
     # creating them here would put directories on disk even in Cloudinary mode.
-    # Base.metadata.create_all(engine)
+    Base.metadata.create_all(engine)
     # After create_all: the seed needs the users table to exist.
     ensure_first_admin(settings)
     logger.info(
