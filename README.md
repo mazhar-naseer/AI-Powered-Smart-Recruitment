@@ -490,7 +490,9 @@ The backend waits for PostgreSQL, applies Alembic migrations, and starts Uvicorn
 
 For a hosted deployment, see [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) — backend and PostgreSQL on Railway, frontend on Vercel, uploaded files on Cloudinary. [docs/GITHUB_ACTIONS_DEPLOYMENT.md](docs/GITHUB_ACTIONS_DEPLOYMENT.md) covers automating it.
 
-Set `USE_CLOUDINARY=true` on any host with an ephemeral filesystem. Uploads written to local disk there are lost on every redeploy and restart.
+Set `USE_CLOUDINARY=true` on any host with an ephemeral filesystem. Uploads written to local disk there are lost on every redeploy and restart. With it on, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` are all required, resumes and avatars are stored on Cloudinary only, and local disk is never used.
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to seed the first administrator at startup — registration refuses the admin role, so a new deployment has no other way in. It is applied only when no administrator exists, and never changes an existing account. Sign in and create any further administrators from the Control Center.
 
 ## Production recommendations
 

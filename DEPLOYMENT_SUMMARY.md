@@ -26,25 +26,40 @@ relocates the debugging into CI logs.
 ### Storage abstraction
 
 Free hosts have ephemeral filesystems — uploads vanish on redeploy, restart, and
-idle spin-down. Files now go to Cloudinary instead of local disk.
+idle spin-down. With `USE_CLOUDINARY=true`, files go to Cloudinary instead of
+local disk.
 
-- **New** `backend/app/storage.py` — save/read/delete for resumes and avatars,
-  local or Cloudinary behind one interface
+- `backend/app/object_storage.py` — the single storage boundary. Two backends,
+  `LocalPrivateStorage` and `CloudinaryPrivateStorage`, behind one
+  `put`/`read`/`open`/`delete` interface, selected by `USE_CLOUDINARY`
 - `backend/app/api.py` — upload and download routes use the abstraction
-- `backend/app/resume_processing.py` — uses the `resume_on_disk()` context
-  manager, which downloads remote files to a temp path for parsing
+- `backend/app/resume_processing.py` — uses the `open()` context manager, which
+  downloads a remote file to a temp path for parsing and removes it after
 - `backend/app/config.py` — Cloudinary settings, plus `normalize_database_url`
   to rewrite `postgresql://` → `postgresql+psycopg://`
 - `cloudinary>=1.41,<2` added to dependencies
 
-Storage keys stay backward compatible: local records are absolute paths, remote
-records carry a `cloudinary:` prefix, and the code routes on the prefix. Records
-written before the switch keep working.
+Cloudinary mode is exclusive: local disk is never read or written, and the local
+storage directories are not even created. Keys carry a `cloudinary:` prefix, so a
+key written before the switch is recognised as local and rejected rather than
+read off a volume that is no longer authoritative. Enabling the flag without all
+three credentials fails at startup instead of quietly falling back to disk.
 
 Resume bytes are streamed back through the API rather than handed out as public
 URLs, so the "only the owning employer may download" rule is unchanged. Cloudinary
 resumes upload as authenticated raw resources — the delivery URL is useless
 without a signature.
+
+### First administrator
+
+Registration refuses the admin role, so a fresh deployment needs a way in. Set
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` (optionally `ADMIN_FULL_NAME`) and
+`backend/app/first_admin.py` seeds one administrator at startup. It runs only
+when no administrator exists — it never resets a password or promotes an
+existing account, so the variables are safe to leave set. Once signed in, that
+administrator creates the others from the Control Center
+(`POST /admin/users/admin`). The seeded password must meet the same strength
+rules the API enforces, or the app refuses to start.
 
 ### Docker
 
