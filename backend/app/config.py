@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     resume_storage_path: Path = Path("../storage/resumes")
     avatar_storage_path: Path = Path("../storage/avatars")
     object_storage_backend: str = "local"
+    # On a host with an ephemeral filesystem, local uploads are lost on every
+    # redeploy, restart, and idle spin-down. With this on, resumes and avatars
+    # are read and written on Cloudinary exclusively and local disk is untouched.
+    use_cloudinary: bool = False
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: str | None = None
     inline_background_jobs: bool = True
     max_resume_size_mb: int = 5
     frontend_origins: Annotated[list[str], NoDecode] = [
@@ -51,6 +58,12 @@ class Settings(BaseSettings):
     email_verification_minutes: int = 30
     password_reset_minutes: int = 30
     admin_bootstrap_token: str | None = None
+    # Seeds the first administrator at startup so a fresh deployment is not
+    # locked out. Applied only when no administrator exists yet; it never
+    # updates or resets an existing account.
+    admin_email: str | None = None
+    admin_password: str | None = None
+    admin_full_name: str = "Administrator"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
     gemini_enabled: bool = True
@@ -71,6 +84,31 @@ class Settings(BaseSettings):
         if not 0 <= value <= 0.5:
             raise ValueError("GEMINI_WEIGHT must be between 0 and 0.5")
         return value
+
+    @model_validator(mode="after")
+    def cloudinary_requires_credentials(self):
+        """Fail fast rather than silently degrade to local disk.
+
+        ``use_cloudinary`` with a missing credential would otherwise upload
+        nothing and write to an ephemeral volume, which is the failure mode the
+        flag exists to prevent. Raising at startup surfaces it immediately.
+        """
+        missing = [
+            name
+            for name, value in (
+                ("CLOUDINARY_CLOUD_NAME", self.cloudinary_cloud_name),
+                ("CLOUDINARY_API_KEY", self.cloudinary_api_key),
+                ("CLOUDINARY_API_SECRET", self.cloudinary_api_secret),
+            )
+            if not value
+        ]
+        if self.use_cloudinary and missing:
+            raise ValueError(
+                "USE_CLOUDINARY=true requires "
+                + ", ".join(missing)
+                + " to be set"
+            )
+        return self
 
     @field_validator("database_url", mode="before")
     @classmethod

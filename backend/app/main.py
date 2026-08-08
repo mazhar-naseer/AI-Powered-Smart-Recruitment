@@ -18,6 +18,7 @@ from app.oauth_api import router as oauth_router
 from app.governance_api import router as governance_router
 from app.config import get_settings
 from app.database import Base, engine
+from app.first_admin import ensure_first_admin
 from app.logging_config import (
     configure_logging,
     get_logger,
@@ -39,9 +40,11 @@ SLOW_REQUEST_SECONDS = 3.0
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting %s in %s environment", settings.app_name, settings.environment)
-    settings.resume_storage_path.mkdir(parents=True, exist_ok=True)
-    settings.avatar_storage_path.mkdir(parents=True, exist_ok=True)
+    # Storage roots are created by the local backend when it is the one selected;
+    # creating them here would put directories on disk even in Cloudinary mode.
     Base.metadata.create_all(engine)
+    # After create_all: the seed needs the users table to exist.
+    ensure_first_admin(settings)
     logger.info(
         "Startup complete (inline_background_jobs=%s, email_verification_enabled=%s)",
         settings.inline_background_jobs,

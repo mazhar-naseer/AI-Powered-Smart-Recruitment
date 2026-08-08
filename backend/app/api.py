@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -59,7 +59,11 @@ from app.schemas import (
     UserStatusUpdate,
     VerifyEmailRequest,
 )
-from app.email_service import consume_verification, issue_email_verification
+from app.email_service import (
+    consume_verification,
+    email_provider_configured,
+    issue_email_verification,
+)
 from app.security import (
     create_token,
     current_user,
@@ -69,7 +73,7 @@ from app.security import (
     verify_password,
 )
 from app.tenancy import create_workspace, ensure_membership, require_permission
-from app.object_storage import avatar_storage, resume_storage
+from app.object_storage import avatar_media_type, avatar_storage, resume_storage
 from app.background_jobs import queue_application_analysis, run_background_job
 from app.logging_config import get_logger
 from app.saas import enforce_limit, increment_usage
@@ -405,14 +409,14 @@ def profile_avatar(user: User = Depends(current_user)):
     if not user.avatar_path:
         raise HTTPException(404, "Profile photo not found")
     try:
-        path = avatar_storage.path(user.avatar_path)
+        content = avatar_storage.read(user.avatar_path)
     except FileNotFoundError:
-        # The row points at a key that is no longer on disk, so the record and the
-        # volume have drifted apart. Storage logged the key.
+        # The row points at a key that is no longer behind it, so the record and
+        # the store have drifted apart. Storage logged the key.
         logger.warning("User %s has an avatar row with no file behind it", user.id)
         raise HTTPException(404, "Profile photo not found") from None
-    mime = "image/png" if path.suffix.lower() == ".png" else "image/webp" if path.suffix.lower() == ".webp" else "image/jpeg"
-    return FileResponse(path, media_type=mime, filename=f"profile{path.suffix.lower()}")
+    mime = avatar_media_type(user.avatar_path)
+    return Response(content, media_type=mime)
 
 
 @router.get("/jobs")
@@ -791,7 +795,7 @@ def download_resume(
     if not app or app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
     try:
-        resume_path = resume_storage.path(app.resume.storage_key)
+        content = resume_storage.read(app.resume.storage_key)
     except FileNotFoundError as exc:
         logger.warning("Resume for application %s is missing from storage", app.id)
         raise HTTPException(404, "Resume file not found") from exc
@@ -800,8 +804,14 @@ def download_resume(
     # A recruiter reading a candidate's document is a privacy-relevant event, so
     # it is recorded in the log as well as the audit table.
     logger.info("User %s downloaded the resume for application %s", user.id, app.id)
-    return FileResponse(
-        resume_path, media_type=app.resume.mime_type, filename=app.resume.original_filename
+    return Response(
+        content,
+        media_type=app.resume.mime_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{app.resume.original_filename}"'
+            )
+        },
     )
 
 
@@ -1120,7 +1130,7 @@ def admin_download_resume(
     if not application:
         raise HTTPException(404, "Application not found")
     try:
-        resume_path = resume_storage.path(application.resume.storage_key)
+        content = resume_storage.read(application.resume.storage_key)
     except FileNotFoundError as exc:
         logger.warning("Resume for application %s is missing from storage", application.id)
         raise HTTPException(404, "Resume file not found") from exc
@@ -1132,7 +1142,7 @@ def admin_download_resume(
         "Admin %s downloaded the resume for application %s", admin.id, application.id
     )
     return Response(
-        resume_path.read_bytes(),
+        content,
         media_type=application.resume.mime_type,
         headers={
             "Content-Disposition": (
