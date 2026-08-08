@@ -792,31 +792,64 @@ def download_resume(
 ):
     app = db.scalar(
         select(Application)
-        .options(joinedload(Application.job), joinedload(Application.resume))
+        .options(
+            joinedload(Application.job),
+            joinedload(Application.resume),
+        )
         .where(Application.id == application_id)
     )
+
+    if not app or not app.resume or not app.job:
+        raise HTTPException(
+            404,
+            "Application not found or resume is missing",
+        )
+
     membership = ensure_membership(db, user)
-    if not app or app.job.organization_id != membership.organization_id:
+
+    if app.job.organization_id != membership.organization_id:
         raise HTTPException(404, "Application not found")
+
     try:
         content = resume_storage.read(app.resume.storage_key)
     except FileNotFoundError as exc:
-        logger.warning("Resume for application %s is missing from storage", app.id)
+        logger.warning(
+            "Resume for application %s is missing from storage",
+            app.id,
+        )
         raise HTTPException(404, "Resume file not found") from exc
     except OSError as exc:
-        raise HTTPException(503, "Resume is temporarily unavailable") from exc
-    audit(db, user.id, "resume.downloaded", "application", app.id)
+        logger.exception(
+            "Storage error while reading resume for application %s",
+            app.id,
+        )
+        raise HTTPException(
+            503,
+            "Resume is temporarily unavailable",
+        ) from exc
+
+    audit(
+        db,
+        user.id,
+        "resume.downloaded",
+        "application",
+        app.id,
+    )
     db.commit()
-    # A recruiter reading a candidate's document is a privacy-relevant event, so
-    # it is recorded in the log as well as the audit table.
-    logger.info("User %s downloaded the resume for application %s", user.id, app.id)
+
+    logger.info(
+        "User %s downloaded the resume for application %s",
+        user.id,
+        app.id,
+    )
+
+    filename = Path(app.resume.original_filename).name
+
     return Response(
-        content,
-        media_type=app.resume.mime_type,
+        content=content,
+        media_type=app.resume.mime_type or "application/octet-stream",
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="{app.resume.original_filename}"'
-            )
+            "Content-Disposition": f'attachment; filename="{filename}"'
         },
     )
 
