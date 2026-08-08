@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.logging_config import get_logger
 from app.models import EmailVerification, User
+from app.models import EmailVerification, PasswordReset, User
 
 settings = get_settings()
 logger = get_logger("app.email")
@@ -196,6 +197,22 @@ def issue_email_verification(db: Session, user: User) -> tuple[str, str, bool]:
         settings.email_verification_minutes,
     )
     return token, code, delivered
+
+
+def issue_password_reset(db: Session, user: User) -> None:
+    token = secrets.token_urlsafe(32)
+    db.execute(update(PasswordReset).where(PasswordReset.user_id == user.id, PasswordReset.consumed_at.is_(None)).values(consumed_at=datetime.now(UTC)))
+    db.add(PasswordReset(user_id=user.id, token_hash=_hash(token), expires_at=datetime.now(UTC) + timedelta(minutes=settings.password_reset_minutes)))
+    link = f"{settings.frontend_url}/reset-password?token={token}"
+    message = EmailMessage()
+    message["Subject"] = "Reset your SmartHire password"
+    message["From"] = settings.smtp_from_email
+    message["To"] = user.email
+    message.set_content(f"Hello {user.full_name},\n\nUse this link to reset your SmartHire password: {link}\n\nThis link expires in {settings.password_reset_minutes} minutes. If you did not request this, you can ignore this email.")
+    safe_link = escape(link, quote=True)
+    message.add_alternative(f"""<!doctype html><html><body style=\"margin:0;background:#f3f6fb;font-family:Arial;color:#10204a\"><table width=\"100%\"><tr><td align=\"center\" style=\"padding:36px 16px\"><table width=\"620\" style=\"max-width:100%;background:#fff;border:1px solid #dce5f1;border-radius:16px\"><tr><td style=\"padding:26px 34px;background:#082b68;color:#fff;font-size:23px;font-weight:800\">SmartHire</td></tr><tr><td style=\"padding:36px 34px\"><div style=\"color:#087848;font-size:12px;font-weight:800;letter-spacing:1px\">SECURITY</div><h1 style=\"font-size:26px;margin:14px 0\">Reset your password</h1><p>Hello {escape(user.full_name)},</p><p>We received a request to reset your SmartHire password. This link expires in {settings.password_reset_minutes} minutes.</p><p style=\"margin:30px 0\"><a href=\"{safe_link}\" style=\"display:inline-block;padding:14px 24px;background:#1744bd;color:#fff;text-decoration:none;border-radius:8px;font-weight:700\">Reset password</a></p><p style=\"font-size:12px;color:#8994a8;word-break:break-all\">If the button does not work, copy this link: {safe_link}</p><p style=\"font-size:12px;color:#8994a8\">If you did not request a password reset, you can safely ignore this email.</p></td></tr></table></td></tr></table></body></html>""", subtype="html")
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    _deliver(message, f"password-reset-{user.id}-{stamp}.txt")
 
 
 def send_team_invitation(email: str, inviter_name: str, organization_name: str, role: str, token: str) -> None:

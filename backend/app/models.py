@@ -337,6 +337,20 @@ class OrganizationSubscription(TimestampMixin, Base):
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class PlanChangeRequest(Base):
+    __tablename__ = "plan_change_requests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    requested_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_plan_key: Mapped[str] = mapped_column(String(40), index=True)
+    current_plan_key: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    reviewed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    review_note: Mapped[str | None] = mapped_column(String(1000))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class UsageCounter(Base):
     __tablename__ = "usage_counters"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -413,6 +427,16 @@ class EmailVerification(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     code_hash: Mapped[str] = mapped_column(String(64), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

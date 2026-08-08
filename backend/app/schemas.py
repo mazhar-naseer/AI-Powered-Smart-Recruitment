@@ -227,6 +227,15 @@ class ResendVerificationRequest(BaseModel):
     email: EmailStr
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=300)
+    password: str = Field(min_length=8, max_length=128)
+
+
 class UserStatusUpdate(BaseModel):
     status: UserStatus
 
@@ -248,6 +257,10 @@ class AdminCreate(BaseModel):
         if not all(checks):
             raise ValueError("Password must contain uppercase, lowercase, number, and special character")
         return value
+
+
+class AdminBootstrapRequest(AdminCreate):
+    bootstrap_token: str = Field(min_length=16, max_length=512)
 
 
 class ScoreOverrideRequest(BaseModel):
