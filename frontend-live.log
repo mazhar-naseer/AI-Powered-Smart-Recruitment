@@ -1,0 +1,27 @@
+
+> smarthire-web@1.0.0 dev
+> vite --host 127.0.0.1
+
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m648[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m7:37:23 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Employer.tsx[22m
+[2m7:37:23 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Employer.tsx[22m
+[2m7:38:49 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Employer.tsx[22m
+[2m7:38:50 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Employer.tsx[22m
+[2m7:41:41 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m7:42:23 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/SocialAuth.tsx[22m
+[2m7:42:24 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/SocialAuth.tsx[22m
+[2m7:46:50 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Public.tsx[22m
+[2m8:01:36 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m8:13:00 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m8:13:10 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/SaaS.tsx[22m
+[2m8:20:16 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/SaaS.tsx[22m
+[2m8:23:55 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/SaaS.tsx[22m
+[2m8:26:52 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components.tsx[22m
+[2m8:26:52 am[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/components.tsx[22m Could not Fast Refresh ("useWorkspacePermissions" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m8:26:52 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/pages/Governance.tsx, /src/pages/SaaS.tsx, /src/pages/OAuth.tsx, /src/pages/Intelligence.tsx, /src/pages/ATS.tsx, /src/pages/Profile.tsx, /src/pages/Admin.tsx, /src/pages/Applicant.tsx, /src/pages/Public.tsx, /src/pages/Employer.tsx, /src/pages/Password.tsx, /src/pages/SocialAuth.tsx, /src/pages/PlanRequests.tsx[22m
+[2m8:30:13 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components.tsx[22m
+[2m8:30:13 am[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/components.tsx[22m Could not Fast Refresh ("useWorkspacePermissions" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m8:30:13 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/pages/Governance.tsx, /src/pages/SaaS.tsx, /src/pages/OAuth.tsx, /src/pages/Intelligence.tsx, /src/pages/ATS.tsx, /src/pages/Profile.tsx, /src/pages/Admin.tsx, /src/pages/Applicant.tsx, /src/pages/Public.tsx, /src/pages/Employer.tsx, /src/pages/Password.tsx, /src/pages/SocialAuth.tsx, /src/pages/PlanRequests.tsx[22m

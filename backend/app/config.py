@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # timeout is spent in full on every send. Registration waits on this.
     smtp_timeout_seconds: int = 15
     email_verification_minutes: int = 30
+    password_reset_minutes: int = 30
+    admin_bootstrap_token: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
     gemini_enabled: bool = True
