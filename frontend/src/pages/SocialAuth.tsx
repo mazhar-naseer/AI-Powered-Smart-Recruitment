@@ -1,5 +1,5 @@
 import{useState,type FormEvent}from'react';
-import{ArrowRight}from'lucide-react';
+import{ArrowRight,BriefcaseBusiness,FileText,LockKeyhole}from'lucide-react';
 import{Link,useNavigate}from'react-router-dom';
 import{useAuth}from'../auth';
 import{Logo}from'../components';
@@ -10,7 +10,7 @@ export function Login(){
   const[email,setEmail]=useState('');const[password,setPassword]=useState('');
   const[error,setError]=useState('');const[busy,setBusy]=useState(false);
   async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError('');try{const user=await login(email,password);nav(user.role==='employer'?'/employer':user.role==='admin'?'/admin':'/applicant/jobs')}catch(reason){setError(reason instanceof Error?reason.message:'Login failed')}finally{setBusy(false)}}
-  return <div className="auth-page"><div className="auth-side"><Logo/><div><h1>Welcome back!</h1><p>Login to continue your hiring or job search journey.</p><div className="auth-illustration">🔐<span>📄</span><span>💼</span></div></div></div><form className="auth-card" onSubmit={submit}><h2>Login</h2><p>Use Google or your SmartHire credentials.</p>{registered&&!error&&<div className="alert success">Account created. Log in to continue.</div>}{error&&<div className="alert error">{error}</div>}<GoogleButton intent="login"/><label>Email Address<input type="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@example.com" required/></label><label>Password<input type="password" value={password} onChange={event=>setPassword(event.target.value)} minLength={8} required/></label><button className="button full" disabled={busy}>{busy?'Signing in…':'Login'}<ArrowRight size={17}/></button><p className="center">Don’t have an account? <Link to="/register">Register here</Link></p></form></div>;
+  return <div className="auth-page"><div className="auth-side"><Logo/><div><h1>Welcome back!</h1><p>Login to continue your hiring or job search journey.</p><div className="auth-illustration" aria-hidden="true"><span><LockKeyhole/></span><span><FileText/></span><span><BriefcaseBusiness/></span></div></div></div><form className="auth-card" onSubmit={submit}><h2>Login</h2><p>Use Google or your SmartHire credentials.</p>{registered&&!error&&<div className="alert success">Account created. Log in to continue.</div>}{error&&<div className="alert error">{error}</div>}<GoogleButton intent="login"/><label>Email Address<input type="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@example.com" required/></label><label>Password<input type="password" value={password} onChange={event=>setPassword(event.target.value)} minLength={8} required/></label><button className="button full" disabled={busy}>{busy?'Signing in…':'Login'}<ArrowRight size={17}/></button><p className="center">Don’t have an account? <Link to="/register">Register here</Link></p></form></div>;
 }
 
 export function Register(){
