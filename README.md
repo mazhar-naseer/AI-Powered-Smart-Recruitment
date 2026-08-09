@@ -1,4 +1,4 @@
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:16213e,100:1a1a2e&height=190&section=header&text=SmartHire&fontColor=ffffff&fontSize=68&fontAlignY=36&desc=AI-Assisted%20Recruitment%20Platform&descAlignY=56&descSize=18" width="100%" />
+<img src="docs/assets/cover.png" alt="SmartHire — AI-Powered Smart Recruitment Platform. Explainable hybrid candidate matching built with FastAPI, React, and PostgreSQL." width="100%" />
 
 <div align="center">
 
