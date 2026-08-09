@@ -12,8 +12,8 @@
 .cell-lead{display:flex;align-items:center;gap:var(--space-3);min-width:0}
 .cell-lead>div{display:grid;gap:2px;min-width:0}
 .rich-table .cell-lead strong{display:block;font-size:var(--text-md);letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rich-table .cell-lead small{display:flex;align-items:center;gap:5px;margin:0;color:var(--muted);font-size:var(--text-xs)}
-.rich-table .cell-lead small svg{width:12px;height:12px;flex:none}
+.rich-table .cell-lead small{display:block;margin:0;color:var(--muted);font-size:var(--text-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rich-table .cell-lead small svg{width:12px;height:12px;flex:none;margin-right:5px;vertical-align:-2px}
 .cell-tile{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:var(--radius-sm);background:#ecf1ff;color:#1747d0;transition:background var(--ease),color var(--ease)}
 .cell-tile svg{width:18px;height:18px}
 tbody tr:hover .cell-tile{background:#dfe8ff;color:#123bbd}
@@ -69,6 +69,9 @@ tbody tr:hover .cell-tile{background:#dfe8ff;color:#123bbd}
 
 @media(max-width:900px){
   .rich-table .col-optional{display:none}
+  /* Bounding the identity column both ways keeps the horizontal scroll short
+     without letting auto table layout squeeze the name down to a few letters. */
+  .rich-table .cell-lead{min-width:148px;max-width:168px}
   .score-ring{gap:var(--space-2)}
   .score-ring>svg{width:38px;height:38px}
   .cell-fit{min-width:0}
