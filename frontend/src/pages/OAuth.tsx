@@ -5,9 +5,22 @@ import{useAuth}from'../auth';
 import{Logo,Spinner}from'../components';
 import{homeFor}from'../navigation';
 
+/** Provider config is static server-side, so a resolved lookup is shared rather
+ *  than refetched by every consumer. Failures are not cached — a transient error
+ *  would otherwise hide Google for the rest of the page session. */
+let providerLookup:Promise<boolean>|undefined;
+function googleEnabled(){
+  providerLookup??=request<any>('/auth/oauth/providers',{auth:false}).then(data=>Boolean(data.google?.enabled)).catch(()=>{providerLookup=undefined;return false});
+  return providerLookup;
+}
+export function useGoogleEnabled(){
+  const[enabled,setEnabled]=useState<boolean>();
+  useEffect(()=>{let active=true;void googleEnabled().then(value=>{if(active)setEnabled(value)});return()=>{active=false}},[]);
+  return enabled;
+}
+
 export function GoogleButton({intent,role='applicant'}:{intent:'login'|'register';role?:string}){
-  const[enabled,setEnabled]=useState(false);
-  useEffect(()=>{request<any>('/auth/oauth/providers',{auth:false}).then(data=>setEnabled(Boolean(data.google?.enabled))).catch(()=>setEnabled(false))},[]);
+  const enabled=useGoogleEnabled();
   if(!enabled)return null;
   const query=new URLSearchParams({intent,role,return_to:window.location.origin});
   return <><div className="auth-divider"><span>or continue with</span></div><a className="google-auth-button" href={`${API_BASE}/auth/oauth/google/start?${query}`}><span className="google-g">G</span><strong>Continue with Google</strong></a></>;

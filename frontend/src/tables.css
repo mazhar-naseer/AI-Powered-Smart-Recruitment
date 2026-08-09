@@ -1,0 +1,76 @@
+/* Employer job + ranked-applicant tables.
+   Scoped under .rich-table so the shared table primitive in styles.css keeps
+   its current look everywhere else. Palette is the existing app palette;
+   the score tones reuse the .badge tones. Motion degrades through the
+   universal prefers-reduced-motion reset in styles.css. */
+
+.rich-table td{padding:var(--space-3) var(--space-3)}
+.rich-table th:first-child,.rich-table td:first-child{padding-left:var(--space-4)}
+.rich-table th:last-child,.rich-table td:last-child{padding-right:var(--space-4)}
+
+/* Identity cell — icon tile or initials avatar beside the primary label. */
+.cell-lead{display:flex;align-items:center;gap:var(--space-3);min-width:0}
+.cell-lead>div{display:grid;gap:2px;min-width:0}
+.rich-table .cell-lead strong{display:block;font-size:var(--text-md);letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rich-table .cell-lead small{display:flex;align-items:center;gap:5px;margin:0;color:var(--muted);font-size:var(--text-xs)}
+.rich-table .cell-lead small svg{width:12px;height:12px;flex:none}
+.cell-tile{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:var(--radius-sm);background:#ecf1ff;color:#1747d0;transition:background var(--ease),color var(--ease)}
+.cell-tile svg{width:18px;height:18px}
+tbody tr:hover .cell-tile{background:#dfe8ff;color:#123bbd}
+.cell-avatar{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:var(--radius-pill);background:linear-gradient(145deg,#0c2d91,#123cc5);color:#fff;font-size:var(--text-base);font-weight:800;letter-spacing:.3px}
+
+/* Rank chip on the ranked-applicants table. */
+.cell-rank{width:28px;height:28px;display:grid;place-items:center;border-radius:var(--radius-sm);background:#eef1f7;color:#53627e;font-size:var(--text-xs);font-weight:800;font-variant-numeric:tabular-nums}
+.cell-rank.top{background:linear-gradient(145deg,#0c2d91,#123cc5);color:#fff;box-shadow:0 3px 10px #12369b3d}
+
+/* Salary and applicant-count cells. */
+.cell-money{display:grid;gap:2px}
+.rich-table .cell-money strong{display:block;font-variant-numeric:tabular-nums;font-size:var(--text-md)}
+.rich-table .cell-money small{margin:0;color:var(--muted);font-size:var(--text-xs)}
+.cell-count{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:var(--radius-pill);background:#f1f4fa;color:#33415d;font-size:var(--text-base);font-weight:700;font-variant-numeric:tabular-nums}
+.cell-count svg{width:14px;height:14px;color:#6d7c99}
+.cell-count.none{background:#f6f7fa;color:#8b95a9}
+
+/* ---------- score ring ---------- */
+.score-ring{display:inline-flex;align-items:center;gap:var(--space-3)}
+.score-ring>svg{width:44px;height:44px;flex:none;transform:rotate(-90deg)}
+.score-ring circle{fill:none;stroke-width:4;stroke-linecap:round}
+.score-ring .ring-track{stroke:#e7ecf5}
+.score-ring .ring-value{stroke:currentColor;transition:stroke-dashoffset .9s cubic-bezier(.22,1,.36,1)}
+.score-ring>div{display:grid;gap:1px}
+.rich-table .score-ring strong{display:block;font-size:var(--text-lg);letter-spacing:-.4px;font-variant-numeric:tabular-nums;line-height:1.1}
+.score-ring strong i{font-style:normal;font-size:var(--text-xs);font-weight:700;margin-left:1px;opacity:.7}
+.rich-table .score-ring small{margin:0;color:var(--muted);font-size:var(--text-xs)}
+.score-ring.tone-green{color:var(--green)}
+.score-ring.tone-blue{color:#2445b9}
+.score-ring.tone-orange{color:#d78500}
+.score-ring.tone-red{color:#c02626}
+.score-ring.tone-grey{color:#aab3c4}
+
+/* ---------- fit column ---------- */
+.cell-fit{display:grid;gap:3px;min-width:150px}
+.fit-label{display:inline-flex;align-items:center;gap:6px;width:max-content;padding:4px 10px;border-radius:var(--radius-pill);font-size:var(--text-xs);font-weight:800;letter-spacing:.02em}
+.fit-label svg{width:13px;height:13px;flex:none}
+.rich-table .cell-fit small{display:block;margin:0;color:var(--muted);font-size:var(--text-xs);line-height:1.45}
+.fit-label.tone-green{background:#e8f9ef;color:#087e48}
+.fit-label.tone-blue{background:#edf2ff;color:#2445b9}
+.fit-label.tone-orange{background:#fff4dc;color:#a46200}
+.fit-label.tone-red{background:#ffeded;color:#c02626}
+.fit-label.tone-grey{background:#f1f3f7;color:#6b7689}
+.fit-review{display:inline-flex;align-items:center;gap:5px;color:#a46200;font-size:var(--text-xs);font-weight:700}
+.fit-review svg{width:12px;height:12px;flex:none}
+
+/* Status badge gains a leading dot so state reads without relying on colour. */
+.badge-dot{width:6px;height:6px;flex:none;border-radius:50%;background:currentColor}
+
+/* Destructive row action reads as destructive before it is clicked. */
+.rich-table .actions .danger{color:#c82626}
+.rich-table .actions .danger:hover{background:#fdeeee;border-color:#f0bcbc}
+
+@media(max-width:900px){
+  .rich-table .col-optional{display:none}
+  .score-ring{gap:var(--space-2)}
+  .score-ring>svg{width:38px;height:38px}
+  .cell-fit{min-width:0}
+  .rich-table .cell-fit small{display:none}
+}

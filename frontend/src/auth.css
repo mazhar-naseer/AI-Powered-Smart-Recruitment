@@ -1,0 +1,109 @@
+/* Authentication experience — /login and /register.
+   Everything is scoped under .auth-shell so the shared .auth-card primitive
+   keeps its current look on password reset, email verification, admin login,
+   and the OAuth error card. The palette is the existing app palette; only
+   geometry, depth, and motion are new. All animation degrades through the
+   universal prefers-reduced-motion reset in styles.css. */
+
+.auth-shell{min-height:100vh;display:grid;grid-template-columns:1.05fr .95fr;background:#f5f7fb}
+
+/* ---------- brand panel ---------- */
+.auth-aside{position:relative;isolation:isolate;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-6);padding:var(--space-6) var(--space-7);color:#fff;background:linear-gradient(145deg,#05235d,#063985)}
+.auth-aside>*{position:relative;z-index:2}
+.auth-aside-glow{position:absolute;inset:-30%;z-index:0;filter:blur(6px);background:radial-gradient(38% 38% at 22% 26%,#2f6bff5c 0,transparent 70%),radial-gradient(34% 34% at 78% 20%,#089b5847 0,transparent 70%),radial-gradient(42% 42% at 62% 82%,#1236b566 0,transparent 72%);animation:auth-drift 26s ease-in-out infinite alternate}
+.auth-aside:after{content:"";position:absolute;inset:0;z-index:1;opacity:.3;background-image:linear-gradient(#ffffff12 1px,transparent 1px),linear-gradient(90deg,#ffffff12 1px,transparent 1px);background-size:46px 46px;-webkit-mask-image:radial-gradient(72% 62% at 50% 38%,#000 0,transparent 100%);mask-image:radial-gradient(72% 62% at 50% 38%,#000 0,transparent 100%)}
+@keyframes auth-drift{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(2%,-3%,0) scale(1.07)}100%{transform:translate3d(-2%,2%,0) scale(1.03)}}
+
+.auth-brand{width:max-content;border-radius:var(--radius-sm)}
+.auth-aside-body{margin:auto 0;display:grid;gap:var(--space-4);max-width:460px}
+.auth-eyebrow{display:inline-flex;align-items:center;gap:7px;width:max-content;padding:6px 13px;border-radius:var(--radius-pill);background:#ffffff1c;border:1px solid #ffffff2e;color:#d8e6ff;font-size:var(--text-xs);font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.auth-eyebrow svg{width:13px;height:13px}
+.auth-aside h1{margin:0;font-size:clamp(29px,3.1vw,42px);line-height:1.12;letter-spacing:-.8px}
+.auth-aside h1 em{font-style:normal;background:linear-gradient(100deg,#8fd8ff,#6ef0b4);-webkit-background-clip:text;background-clip:text;color:transparent}
+.auth-aside-body>p{margin:0;max-width:390px;color:#cfdffb;font-size:var(--text-md);line-height:1.7}
+
+.auth-highlights{list-style:none;margin:var(--space-2) 0 0;padding:0;display:grid;gap:var(--space-3)}
+.auth-highlights li{display:grid;grid-template-columns:38px minmax(0,1fr);gap:var(--space-3);align-items:center;animation:auth-rise .6s cubic-bezier(.22,1,.36,1) both}
+.auth-highlights li:nth-child(1){animation-delay:.14s}
+.auth-highlights li:nth-child(2){animation-delay:.24s}
+.auth-highlights li:nth-child(3){animation-delay:.34s}
+.auth-highlights li>span{width:38px;height:38px;display:grid;place-items:center;border-radius:var(--radius-md);background:#ffffff1f;border:1px solid #ffffff30;color:#a9e8ff}
+.auth-highlights strong{display:block;font-size:var(--text-md);line-height:1.4}
+.auth-highlights small{color:#b9cdf0;font-size:var(--text-base);line-height:1.5}
+
+.auth-shell .auth-illustration{margin:0;gap:var(--space-3)}
+.auth-shell .auth-illustration span{width:62px;height:62px;border-radius:var(--radius-md);animation:auth-float 6s ease-in-out infinite}
+.auth-shell .auth-illustration span svg{width:25px;height:25px}
+.auth-shell .auth-illustration span:first-child{width:72px;height:72px;animation-delay:-2s}
+.auth-shell .auth-illustration span:first-child svg{width:29px;height:29px}
+.auth-shell .auth-illustration span:nth-child(3){animation-delay:-4s}
+@keyframes auth-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+@keyframes auth-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* ---------- form panel ---------- */
+.auth-main{display:grid;place-items:center;padding:var(--space-6) var(--space-5)}
+.auth-shell .auth-card{width:min(452px,100%);margin:0;padding:var(--space-6);border:1px solid #e8edf7;border-radius:var(--radius-lg);box-shadow:0 20px 60px #0b28630f;animation:auth-card-in .55s cubic-bezier(.22,1,.36,1) both}
+.auth-shell .auth-card.wide{width:min(556px,100%)}
+@keyframes auth-card-in{from{opacity:0;transform:translateY(18px) scale(.985)}to{opacity:1;transform:none}}
+.auth-shell .auth-card>*{animation:auth-rise .5s cubic-bezier(.22,1,.36,1) both}
+.auth-shell .auth-card>:nth-child(1){animation-delay:.1s}
+.auth-shell .auth-card>:nth-child(2){animation-delay:.16s}
+.auth-shell .auth-card>:nth-child(3){animation-delay:.22s}
+.auth-shell .auth-card>:nth-child(4){animation-delay:.28s}
+.auth-shell .auth-card>:nth-child(5){animation-delay:.34s}
+.auth-shell .auth-card>:nth-child(6){animation-delay:.4s}
+.auth-shell .auth-card>:nth-child(n+7){animation-delay:.46s}
+
+.auth-card-head{display:grid;gap:var(--space-2)}
+.auth-shell .auth-card-head h2{font-size:var(--text-2xl);letter-spacing:-.5px}
+.auth-shell .auth-card-head p{margin:0;color:var(--muted);font-size:var(--text-md);line-height:1.6}
+
+.auth-shell .auth-card label{gap:7px;font-size:var(--text-base);color:#22304f}
+.auth-shell .auth-card input{height:46px}
+.auth-shell .form-grid{gap:var(--space-4)}
+
+/* Role selector — the pill slides between the two options. */
+.auth-shell .role-tabs{position:relative;isolation:isolate;padding:5px;border-color:#e4e9f4;border-radius:var(--radius-md);background:#f1f4fb}
+.auth-shell .role-tabs:before{content:"";position:absolute;z-index:-1;top:5px;bottom:5px;left:5px;width:calc(50% - 5px);border-radius:var(--radius-sm);background:linear-gradient(135deg,#0c2d91,#123cc5);box-shadow:0 6px 18px #12369b3d;transition:transform .28s cubic-bezier(.22,1,.36,1)}
+.auth-shell .role-tabs.employer:before{transform:translateX(100%)}
+.auth-shell .role-tabs button{min-height:40px;border-radius:var(--radius-sm);background:none;color:#41506d;transition:color var(--ease)}
+.auth-shell .role-tabs button:hover{color:#16224a}
+.auth-shell .role-tabs .active,.auth-shell .role-tabs .active:hover{background:none;color:#fff}
+
+.auth-shell .auth-divider{margin:0}
+.auth-shell .google-auth-button{height:46px;border-radius:var(--radius-sm);font-size:var(--text-md);transition:border-color var(--ease),box-shadow var(--ease),background var(--ease),transform var(--ease)}
+.auth-shell .google-auth-button:hover{transform:translateY(-1px)}
+
+/* Submit button gets a light sweep on hover; the arrow nudges forward. */
+.auth-shell .auth-submit{position:relative;overflow:hidden;min-height:48px}
+.auth-shell .auth-submit:before{content:"";position:absolute;top:0;bottom:0;left:-60%;width:45%;background:linear-gradient(100deg,#fff0,#ffffff40,#fff0);transform:skewX(-18deg);transition:left .55s ease}
+.auth-shell .auth-submit:hover:not(:disabled):before{left:120%}
+.auth-shell .auth-submit svg{transition:transform var(--ease)}
+.auth-shell .auth-submit:hover:not(:disabled) svg{transform:translateX(3px)}
+
+.auth-meta{display:flex;justify-content:flex-end;margin-top:calc(var(--space-2)*-1)}
+.auth-meta a{color:#2a4fc6;font-size:var(--text-base);font-weight:600}
+.auth-shell .auth-card .center{margin:0;color:var(--muted);font-size:var(--text-base)}
+.auth-shell .auth-card .center a,.auth-meta a{position:relative}
+.auth-shell .auth-card .center a:after,.auth-meta a:after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:1.5px;background:currentColor;transform:scaleX(0);transform-origin:left;transition:transform var(--ease)}
+.auth-shell .auth-card .center a:hover:after,.auth-meta a:hover:after{transform:scaleX(1)}
+
+@media(max-width:1200px){
+  .auth-shell{grid-template-columns:1fr .92fr}
+  .auth-aside{padding:var(--space-6) var(--space-5)}
+}
+@media(max-width:900px){
+  .auth-shell{grid-template-columns:1fr}
+  .auth-aside{gap:var(--space-4);padding:var(--space-5) var(--space-4)}
+  .auth-aside-body{margin:0;gap:var(--space-3)}
+  .auth-aside h1{font-size:26px}
+  .auth-aside-body>p{font-size:var(--text-base)}
+  .auth-highlights,.auth-shell .auth-illustration{display:none}
+  .auth-main{padding:var(--space-5) var(--space-4)}
+  .auth-shell .auth-card{box-shadow:var(--shadow-md)}
+}
+@media(max-width:640px){
+  .auth-aside{padding:var(--space-4)}
+  .auth-aside h1{font-size:23px}
+  .auth-shell .auth-card{padding:var(--space-5)}
+}
+

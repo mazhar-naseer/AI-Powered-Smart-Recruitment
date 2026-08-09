@@ -1,6 +1,6 @@
 import{useEffect,useRef,useState,type ReactNode,type RefObject}from'react';
 import{Link,NavLink,useLocation,useNavigate}from'react-router-dom';
-import{Activity,Bell,BrainCircuit,BriefcaseBusiness,CreditCard,Database,LayoutDashboard,LogOut,Menu,Settings,ShieldCheck,Users,FileText,UserCircle,Search,Workflow,X,type LucideIcon}from'lucide-react';
+import{Activity,Bell,BrainCircuit,BriefcaseBusiness,CircleAlert,CircleCheckBig,CircleDashed,CircleMinus,CreditCard,Database,LayoutDashboard,LogOut,Menu,Settings,ShieldCheck,ThumbsUp,Trophy,Users,FileText,UserCircle,Search,Workflow,X,type LucideIcon}from'lucide-react';
 import{useAuth}from'./auth';
 import{homeFor}from'./navigation';
 import{request}from'./api';
@@ -12,6 +12,34 @@ export function useWorkspacePermissions(enabled=true){const[permissions,setPermi
 export function Logo(){const{user}=useAuth();const nav=useNavigate();const openHome=()=>nav(homeFor(user));return <div className="logo logo-link" role="link" tabIndex={0} aria-label="SmartHire home" onClick={openHome} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openHome()}}}><span className="logo-mark">S</span><span>SmartHire</span></div>}
 export function Spinner(){return <div className="spinner" role="status" aria-label="Loading"/>}
 export function Empty({title,body,icon:Icon=Search}:{title:string;body:string;icon?:LucideIcon}){return <div className="empty"><Icon size={34}/><h3>{title}</h3><p>{body}</p></div>}
+
+/** Fit bands sit on the backend's own recommendation cut-points — see
+ *  backend/app/resume_processing.py: strong_match at >=75, review at >=50,
+ *  weak_match below. The extra 85 and 60 edges only add granularity inside
+ *  those bands, so this label can never contradict a stored ai_recommendation. */
+export type FitTier={label:string;tone:string;hint:string;icon:LucideIcon};
+export function fitTier(score:number|null|undefined):FitTier{
+  if(score==null)return{label:'Not scored',tone:'grey',hint:'Awaiting resume analysis.',icon:CircleDashed};
+  if(score>=85)return{label:'Excellent fit',tone:'green',hint:'Meets nearly all job requirements.',icon:Trophy};
+  if(score>=75)return{label:'Strong fit',tone:'green',hint:'Covers the core requirements well.',icon:CircleCheckBig};
+  if(score>=60)return{label:'Good fit',tone:'blue',hint:'Solid overlap with some gaps.',icon:ThumbsUp};
+  if(score>=50)return{label:'Fair fit',tone:'orange',hint:'Partial match — worth a closer read.',icon:CircleAlert};
+  return{label:'Weak fit',tone:'red',hint:'Limited overlap with the requirements.',icon:CircleMinus};
+}
+
+/** Percentage as an animated donut. The ring is decorative — the adjacent
+ *  number and fit label carry the value for assistive tech. */
+export function ScoreRing({value,tone,caption}:{value:number|null|undefined;tone:string;caption?:string}){
+  const radius=18,circumference=2*Math.PI*radius;
+  const filled=value==null?0:Math.max(0,Math.min(100,value));
+  return <div className={`score-ring tone-${tone}`}>
+    <svg viewBox="0 0 44 44" aria-hidden="true" focusable="false">
+      <circle className="ring-track" cx="22" cy="22" r={radius}/>
+      <circle className="ring-value" cx="22" cy="22" r={radius} strokeDasharray={circumference} strokeDashoffset={circumference-circumference*filled/100}/>
+    </svg>
+    <div><strong>{value==null?'—':<>{Math.round(value)}<i>%</i></>}</strong>{caption&&<small>{caption}</small>}</div>
+  </div>
+}
 
 const FOCUSABLE='a[href],button:not([disabled]),select,input,[tabindex]:not([tabindex="-1"])';
 // Drawer state for the ≤900px shells. The nav itself is unchanged — this only

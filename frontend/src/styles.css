@@ -14,6 +14,8 @@
 @import './operations.css';
 @import './pipeline-settings.css';
 @import './workspace-readonly.css';
+@import './auth.css';
+@import './tables.css';
 /* Geometry and rhythm tokens. Colour stays literal below — these describe spacing,
    radii, elevation, and type scale only, so the palette is unaffected.
    --bp-* are documentation: custom properties are not valid in @media conditions,
