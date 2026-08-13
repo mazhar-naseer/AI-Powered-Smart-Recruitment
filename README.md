@@ -28,6 +28,12 @@
 
 </div>
 
+<div align="center">
+
+🌐 **Live Demo:** [https://smarthire-prod.vercel.app/](https://smarthire-prod.vercel.app/)
+
+</div>
+
 ---
 
 ## Overview
@@ -60,6 +66,24 @@ JWT access/refresh tokens, bcrypt hashing, server-enforced RBAC, private resume 
 </tr>
 </table>
 
+## Project Snapshot
+
+| Category | Details |
+|---|---|
+| **Project** | SmartHire |
+| **Type** | AI-Powered Recruitment & ATS Platform |
+| **Architecture** | Full-Stack Web Application |
+| **Backend** | FastAPI (Python 3.12) |
+| **Frontend** | React 18 + TypeScript 5.7 (Vite) |
+| **Database** | PostgreSQL 17 (Psycopg 3) |
+| **AI Provider** | Google Gemini (Structured JSON) |
+| **Authentication** | JWT (Access + Refresh) + bcrypt + Google OAuth |
+| **Matching** | Deterministic + AI Hybrid (confidence-adjusted) |
+| **Max AI Influence** | 35% (bounded by config, reduced by model confidence) |
+| **Deployment** | Docker Compose / Railway / Vercel |
+| **Storage** | Local Private Disk / Cloudinary |
+| **Testing** | Pytest / Vitest / Playwright |
+
 ## Contents
 
 | | | |
@@ -82,7 +106,7 @@ JWT access/refresh tokens, bcrypt hashing, server-enforced RBAC, private resume 
 - Real-time processing status and retryable analysis failures
 - Explainable match report containing deterministic and AI scores
 - KPI breakdown, matched skills, missing evidence, AI confidence, and recommendations
-- Clear “Application already submitted” state
+- Clear "Application already submitted" state
 
 </details>
 
@@ -233,7 +257,7 @@ Resume and job text are marked as untrusted data in the model prompt. The model 
 
 ### 3. Confidence-adjusted hybrid result
 
-The AI engine receives at most **35%** influence, and its real influence is reduced when model confidence is lower.
+The AI engine receives at most **35%** influence (configured via `GEMINI_WEIGHT`, validated to `0 ≤ weight ≤ 0.5`), and its real influence is reduced when model confidence is lower.
 
 ```text
 Effective AI weight    = maximum AI weight × AI confidence
@@ -548,7 +572,7 @@ Additional test scenarios and manual QA instructions are documented in [docs/TES
 - Private resumes are downloadable only by the employer who owns the associated job
 - Scanned PDFs use OCR when its optional system dependency is available; otherwise they return a clear retryable error
 - AI failure never converts a successfully parsed resume into a failed application
-- Existing deterministic-only records can use the “Retry AI analysis” action
+- Existing deterministic-only records can use the "Retry AI analysis" action
 - Administrative actions and important authentication events are audited
 
 ## Docker deployment
@@ -605,6 +629,23 @@ Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to seed the first administrator at startu
 | [Decisions and open questions](docs/DECISIONS_AND_QUESTIONS.md) | Recorded trade-offs |
 | [Railway deployment guide](docs/RAILWAY_DEPLOYMENT.md) | Hosted deployment walkthrough |
 | [GitHub Actions deployment](docs/GITHUB_ACTIONS_DEPLOYMENT.md) | CI/CD automation |
+| [ATS Foundation test report](docs/ATS_FOUNDATION_TEST_REPORT.md) | ATS validation results |
+| [Commercial SaaS test report](docs/COMMERCIAL_SAAS_TEST_REPORT.md) | SaaS layer validation results |
+
+## 👥 Team
+
+**Muhammad Bilal Hussain** — Project Developer  
+Portfolio: https://bilalforge.vercel.app/  
+LinkedIn: https://www.linkedin.com/in/bilal-hussain-dev/
+
+**Team Members**
+
+- Mazhar Naseer
+- Tayyab Sarwar
+- Oma Baheen
+- Atikah Qaisar
+
+> A huge shoutout to my amazing teammates **Mazhar Naseer, Tayyab Sarwar, Oma Baheen, and Atikah Qaisar** for their collaboration, effort, and dedication throughout the project. 🙌
 
 ## License
 
