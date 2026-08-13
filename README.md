@@ -634,18 +634,13 @@ Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to seed the first administrator at startu
 
 ## 👥 Team
 
-**Muhammad Bilal Hussain** — Project Developer  
-Portfolio: https://bilalforge.vercel.app/  
-LinkedIn: https://www.linkedin.com/in/bilal-hussain-dev/
-
 **Team Members**
 
 - Mazhar Naseer
 - Tayyab Sarwar
 - Oma Baheen
 - Atikah Qaisar
-
-> A huge shoutout to my amazing teammates **Mazhar Naseer, Tayyab Sarwar, Oma Baheen, and Atikah Qaisar** for their collaboration, effort, and dedication throughout the project. 🙌
+- Muhammad Bilal Hussain
 
 ## License
 
